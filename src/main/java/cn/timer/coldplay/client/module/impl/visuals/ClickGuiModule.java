@@ -12,7 +12,10 @@ public final class ClickGuiModule extends Module {
 
     @Override
     protected void onEnable() {
-        ClientCore.get().openClickGui();
+        // The screen closes itself on its own key; a toggle from inside the GUI must not reopen it.
+        if (!ClientCore.get().isClickGuiOpen()) {
+            ClientCore.get().openClickGui();
+        }
         setEnabled(false);
     }
 }
