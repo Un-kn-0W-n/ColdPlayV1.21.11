@@ -1,0 +1,19 @@
+{
+  "required": true,
+  "package": "cn.timer.coldplay.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ClientPacketListenerMixin",
+    "ConnectionMixin",
+    "GameRendererMixin",
+    "KeyboardInputMixin",
+    "LivingEntityMixin",
+    "LivingEntityRendererMixin",
+    "LocalPlayerMixin",
+    "LightTextureMixin",
+    "MinecraftSessionMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
