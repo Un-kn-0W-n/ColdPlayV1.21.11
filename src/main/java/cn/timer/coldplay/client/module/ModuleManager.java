@@ -40,6 +40,15 @@ public final class ModuleManager {
         }
     }
 
+    /** Discards queued key clicks, for a press the GUI already consumed. */
+    public void drainKeybinds() {
+        for (Module module : modules) {
+            while (module.keybind().mapping().consumeClick()) {
+                // discard
+            }
+        }
+    }
+
     public boolean pollKeybinds() {
         boolean changed = false;
         for (Module module : modules) {
