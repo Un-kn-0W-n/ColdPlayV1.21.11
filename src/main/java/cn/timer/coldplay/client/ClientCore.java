@@ -1,7 +1,9 @@
 package cn.timer.coldplay.client;
 
 import cn.timer.coldplay.client.alt.AltManager;
-import cn.timer.coldplay.client.gui.ClickGuiScreen;
+import cn.timer.coldplay.client.gui.click.ClickGuiScreen;
+import cn.timer.coldplay.client.hud.HudState;
+import cn.timer.coldplay.client.hud.StatusBars;
 import cn.timer.coldplay.client.manager.ConfigManager;
 import cn.timer.coldplay.client.manager.RotationManager;
 import cn.timer.coldplay.client.module.ModuleManager;
@@ -46,6 +48,7 @@ public final class ClientCore {
     private ModuleManager modules;
     private ConfigManager config;
     private ClickGuiScreen clickGui;
+    private HudState hudState;
     private AltManager altManager;
     private EntityESP entityEsp;
     private InvManager invManager;
@@ -65,6 +68,7 @@ public final class ClientCore {
         }
 
         modules = new ModuleManager();
+        hudState = new HudState();
         AntiBot antiBot = AntiBot.get();
         modules.register(antiBot);
         antiBot.setEnabled(true);
@@ -83,7 +87,7 @@ public final class ClientCore {
         chestStealer = new ChestStealer(invManager);
         modules.register(chestStealer);
         modules.register(new FullBright());
-        Hud hud = new Hud(modules);
+        Hud hud = new Hud(modules, hudState);
         modules.register(hud);
         entityEsp = new EntityESP();
         modules.register(entityEsp);
@@ -94,6 +98,7 @@ public final class ClientCore {
                 Identifier.fromNamespaceAndPath("coldplay", "hud"), hud::render);
         HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT,
                 Identifier.fromNamespaceAndPath("coldplay", "entity_esp"), entityEsp::render2D);
+        registerStatusBars();
         WorldRenderEvents.END_EXTRACTION.register(entityEsp::extract2D);
         WorldRenderEvents.END_EXTRACTION.register(backTrack::extractRealPosition);
 
@@ -109,8 +114,13 @@ public final class ClientCore {
         ClientEntityEvents.ENTITY_UNLOAD.register(backTrack::onEntityUnload);
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             initializeUi(client);
-            if (clickGui != null && !clickGui.isCapturingKey() && modules.pollKeybinds()) {
-                save();
+            if (clickGui != null) {
+                if (clickGui.consumeKeybindDrain()) {
+                    modules.drainKeybinds(); // the key that closed the GUI or was just bound is not a toggle
+                }
+                if (!clickGui.isCapturingKey() && modules.pollKeybinds()) {
+                    save();
+                }
             }
             invManager.tick(client);
             chestStealer.tick(client);
@@ -141,6 +151,28 @@ public final class ClientCore {
         LOGGER.info("ColdPlay initialized");
     }
 
+    /** The pill bars stand in for the vanilla survival rows; each wrapper falls back to vanilla when off. */
+    private void registerStatusBars() {
+        HudElementRegistry.replaceElement(VanillaHudElements.HEALTH_BAR, vanilla -> (graphics, tickCounter) -> {
+            if (!StatusBars.active() || !StatusBars.render(graphics)) {
+                vanilla.render(graphics, tickCounter);
+            }
+        });
+        for (Identifier hidden : new Identifier[]{VanillaHudElements.ARMOR_BAR, VanillaHudElements.FOOD_BAR,
+                VanillaHudElements.AIR_BAR}) {
+            HudElementRegistry.replaceElement(hidden, vanilla -> (graphics, tickCounter) -> {
+                if (!StatusBars.active()) {
+                    vanilla.render(graphics, tickCounter);
+                }
+            });
+        }
+        HudElementRegistry.replaceElement(VanillaHudElements.EXPERIENCE_LEVEL, vanilla -> (graphics, tickCounter) -> {
+            if (!StatusBars.consumeExperienceRendered()) {
+                vanilla.render(graphics, tickCounter);
+            }
+        });
+    }
+
     public boolean initialized() {
         return initialized;
     }
@@ -151,6 +183,10 @@ public final class ClientCore {
 
     public ConfigManager config() {
         return config;
+    }
+
+    public HudState hudState() {
+        return hudState;
     }
 
     public AltManager altManager() {
@@ -181,12 +217,16 @@ public final class ClientCore {
         minecraft.setScreen(clickGui);
     }
 
+    public boolean isClickGuiOpen() {
+        return clickGui != null && Minecraft.getInstance().screen == clickGui;
+    }
+
     private void initializeUi(Minecraft minecraft) {
         if (clickGui != null || minecraft.font == null) {
             return;
         }
-        clickGui = new ClickGuiScreen(modules);
-        config = new ConfigManager(modules, clickGui);
+        clickGui = new ClickGuiScreen(modules, hudState);
+        config = new ConfigManager(modules, clickGui, hudState);
         config.load();
     }
 

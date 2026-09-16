@@ -1,6 +1,7 @@
 package cn.timer.coldplay.client.module;
 
 import cn.timer.coldplay.client.setting.KeybindSetting;
+import cn.timer.coldplay.client.setting.ModeSetting;
 import cn.timer.coldplay.client.setting.Setting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.DeltaTracker;
@@ -86,6 +87,16 @@ public abstract class Module {
 
     public final KeybindSetting keybind() {
         return keybind;
+    }
+
+    /** Gray text after the name in the HUD array list: the first mode setting's value, or null. */
+    public final String suffix() {
+        for (Setting<?> setting : settings) {
+            if (setting instanceof ModeSetting mode) {
+                return mode.get();
+            }
+        }
+        return null;
     }
 
     public final boolean enabled() {
