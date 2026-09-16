@@ -4,6 +4,7 @@ import cn.timer.coldplay.client.ClientCore;
 import cn.timer.coldplay.client.manager.RotationManager;
 import cn.timer.coldplay.client.module.impl.combat.WTap;
 import cn.timer.coldplay.client.module.impl.movement.Sprint;
+import cn.timer.coldplay.client.module.impl.movement.Velocity;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.ClientInput;
 import net.minecraft.client.player.KeyboardInput;
@@ -23,6 +24,18 @@ abstract class KeyboardInputMixin extends ClientInput {
     private boolean coldplay$sprint(boolean sprint) {
         return sprint || ClientCore.get().modules().get(Sprint.class).enabled()
                 && Minecraft.getInstance().options.keyUp.isDown();
+    }
+
+    /** Velocity rides the jump key rather than the motion, so vanilla's own jump gate still decides. */
+    @ModifyArg(method = "tick", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/world/entity/player/Input;<init>(ZZZZZZZ)V"), index = 4)
+    private boolean coldplay$jump(boolean jump) {
+        if (jump) {
+            return true;
+        }
+        ClientCore core = ClientCore.get();
+        Velocity velocity = core.initialized() ? core.modules().get(Velocity.class) : null;
+        return velocity != null && velocity.wantsJump(Minecraft.getInstance().player);
     }
 
     @Inject(method = "tick", at = @At("RETURN"))
