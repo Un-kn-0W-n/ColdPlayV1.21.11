@@ -1,7 +1,8 @@
 package cn.timer.coldplay.client.manager;
 
 import cn.timer.coldplay.client.ClientCore;
-import cn.timer.coldplay.client.gui.ClickGuiScreen;
+import cn.timer.coldplay.client.gui.click.ClickGuiScreen;
+import cn.timer.coldplay.client.hud.HudState;
 import cn.timer.coldplay.client.module.Category;
 import cn.timer.coldplay.client.module.Module;
 import cn.timer.coldplay.client.module.ModuleManager;
@@ -16,7 +17,6 @@ import cn.timer.coldplay.client.setting.RangeSetting;
 import cn.timer.coldplay.client.setting.Setting;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -30,19 +30,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 
 public final class ConfigManager {
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private final Path path = FabricLoader.getInstance().getConfigDir().resolve("coldplay.json");
     private final ModuleManager modules;
     private final ClickGuiScreen clickGui;
+    private final HudState hudState;
 
-    public ConfigManager(ModuleManager modules, ClickGuiScreen clickGui) {
+    public ConfigManager(ModuleManager modules, ClickGuiScreen clickGui, HudState hudState) {
         this.modules = modules;
         this.clickGui = clickGui;
+        this.hudState = hudState;
     }
 
     public void load() {
@@ -65,6 +65,10 @@ public final class ConfigManager {
             if (guiData != null) {
                 loadGui(guiData);
             }
+            JsonObject hudData = object(root, "hud");
+            if (hudData != null) {
+                loadHud(hudData);
+            }
         } catch (IOException | RuntimeException exception) {
             ClientCore.LOGGER.warn("Could not load {}", path, exception);
         }
@@ -74,6 +78,7 @@ public final class ConfigManager {
         JsonObject root = new JsonObject();
         root.add("modules", saveModules());
         root.add("gui", saveGui());
+        root.add("hud", saveHud());
 
         Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
         try {
@@ -132,10 +137,29 @@ public final class ConfigManager {
             panels.add(entry.getKey().name(), data);
         }
         gui.add("panels", panels);
-        JsonArray expanded = new JsonArray();
-        clickGui.expandedModules().stream().sorted().forEach(expanded::add);
-        gui.add("expandedModules", expanded);
+        gui.add("layout", layoutJson(clickGui.layoutWidth(), clickGui.layoutHeight()));
         return gui;
+    }
+
+    private JsonObject saveHud() {
+        JsonObject hud = new JsonObject();
+        hud.add("layout", layoutJson(hudState.getLayoutWidth(), hudState.getLayoutHeight()));
+        JsonObject positions = new JsonObject();
+        for (Map.Entry<String, HudState.Position> entry : hudState.getPositions().entrySet()) {
+            JsonObject data = new JsonObject();
+            data.addProperty("x", entry.getValue().x);
+            data.addProperty("y", entry.getValue().y);
+            positions.add(entry.getKey(), data);
+        }
+        hud.add("positions", positions);
+        return hud;
+    }
+
+    private static JsonObject layoutJson(int width, int height) {
+        JsonObject layout = new JsonObject();
+        layout.addProperty("width", width);
+        layout.addProperty("height", height);
+        return layout;
     }
 
     private void loadSettings(JsonObject data) {
@@ -207,7 +231,10 @@ public final class ConfigManager {
 
     private void loadGui(JsonObject data) {
         JsonObject panels = object(data, "panels");
-        if (panels != null) {
+        JsonObject layout = object(data, "layout");
+        // Positions saved by the previous GUI design lack a layout size; they were placed for wider
+        // panels and would overlap, so the panels start from the default row instead.
+        if (panels != null && layout != null) {
             for (Category category : Category.values()) {
                 JsonObject panel = object(panels, category.name());
                 if (panel == null) {
@@ -220,20 +247,38 @@ public final class ConfigManager {
                 }
             }
         }
-
-        if (data.has("expandedModules")) {
-            JsonElement element = data.get("expandedModules");
-            if (!element.isJsonArray()) {
-                warn("gui.expandedModules", "expected an array");
-                return;
+        if (layout != null) {
+            try {
+                clickGui.setLayoutSize(requiredInt(layout, "width"), requiredInt(layout, "height"));
+            } catch (RuntimeException exception) {
+                warn("gui.layout", exception.getMessage());
             }
-            Set<String> expanded = new HashSet<>();
-            for (JsonElement name : element.getAsJsonArray()) {
-                if (name.isJsonPrimitive() && name.getAsJsonPrimitive().isString() && modules.getByName(name.getAsString()) != null) {
-                    expanded.add(name.getAsString());
+        }
+    }
+
+    private void loadHud(JsonObject data) {
+        JsonObject layout = object(data, "layout");
+        if (layout != null) {
+            try {
+                hudState.setLayoutSize(requiredInt(layout, "width"), requiredInt(layout, "height"));
+            } catch (RuntimeException exception) {
+                warn("hud.layout", exception.getMessage());
+            }
+        }
+        JsonObject positions = object(data, "positions");
+        if (positions != null) {
+            for (Map.Entry<String, JsonElement> entry : positions.entrySet()) {
+                if (!entry.getValue().isJsonObject()) {
+                    warn("hud.positions." + entry.getKey(), "expected an object");
+                    continue;
+                }
+                JsonObject position = entry.getValue().getAsJsonObject();
+                try {
+                    hudState.put(entry.getKey(), requiredInt(position, "x"), requiredInt(position, "y"));
+                } catch (RuntimeException exception) {
+                    warn("hud.positions." + entry.getKey(), exception.getMessage());
                 }
             }
-            clickGui.setExpandedModules(expanded);
         }
     }
 
