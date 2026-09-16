@@ -15,12 +15,19 @@ public final class TextField {
 
     public static void draw(GuiGraphics graphics, Font font, int x, int y, int width, int height,
                             String value, boolean focused, String placeholder, int cursorCounter) {
+        draw(graphics, font, x, y, width, height, value, focused, placeholder, cursorCounter, false);
+    }
+
+    /** {@code masked} shows one asterisk per character, for tokens and passwords. */
+    public static void draw(GuiGraphics graphics, Font font, int x, int y, int width, int height,
+                            String value, boolean focused, String placeholder, int cursorCounter,
+                            boolean masked) {
         Draw.borderedRect(graphics, x, y, x + width, y + height, Theme.WELL,
                 focused ? Theme.FROST : Theme.SEP);
 
         String safeValue = value == null ? "" : value;
         boolean showPlaceholder = safeValue.isEmpty() && !focused;
-        String shown = tail(font, safeValue, width - 6);
+        String shown = tail(font, masked ? "*".repeat(safeValue.length()) : safeValue, width - 6);
         int textY = Draw.textY(y, height);
         Draw.text(graphics, font, showPlaceholder ? placeholder : shown, x + 3, textY,
                 showPlaceholder ? Theme.TEXT_DIM : Theme.TEXT);

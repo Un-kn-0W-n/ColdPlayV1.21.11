@@ -5,6 +5,7 @@ import net.minecraft.client.User;
 import net.lenni0451.commons.httpclient.requests.impl.GetRequest;
 import io.netty.handler.proxy.Socks5ProxyHandler;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -30,6 +31,7 @@ public final class AltManagerSelfCheck {
         fixedErrors();
         redaction();
         repositoryRoundTrip();
+        offlineAccounts();
         dpapiRoundTrip();
     }
 
@@ -163,6 +165,60 @@ public final class AltManagerSelfCheck {
             directory = null;
         } catch (Exception exception) {
             throw new AssertionError("Alt Manager repository self-check failed", exception);
+        } finally {
+            if (directory != null) {
+                try {
+                    Files.deleteIfExists(directory.resolve("coldplay-alts.json"));
+                    Files.deleteIfExists(directory);
+                } catch (Exception ignored) {
+                    // The assertion above remains the useful failure.
+                }
+            }
+        }
+    }
+
+    /** Cracked accounts carry no credential, list under their own tab and can be removed. */
+    private static void offlineAccounts() {
+        UUID offlineUuid = UUID.nameUUIDFromBytes("OfflinePlayer:Cracked".getBytes(StandardCharsets.UTF_8));
+        assert AltManager.offlineSession(new User("Cracked", offlineUuid, "", Optional.empty(), Optional.empty()));
+        assert AltManager.offlineSession(new User("Cracked", offlineUuid, TOKEN_ONE, Optional.empty(), Optional.empty()));
+        assert !AltManager.offlineSession(new User("Player", UUID.randomUUID(), TOKEN_ONE, Optional.empty(), Optional.empty()));
+        assert TokenType.OFFLINE.cracked() && !TokenType.ACCESS_TOKEN.cracked() && !TokenType.REFRESH_TOKEN.cracked();
+
+        Path directory = null;
+        try {
+            directory = Files.createTempDirectory("coldplay-alt-offline-check-");
+            Path file = directory.resolve("coldplay-alts.json");
+            SecureCredentialStorage storage = new SecureCredentialStorage();
+            AltAccountRepository repository = new AltAccountRepository(file, storage);
+            UUID premiumUuid = UUID.randomUUID();
+            repository.upsertAndSave(new AltAccount(premiumUuid, "Premium", TokenType.ACCESS_TOKEN, "",
+                    Instant.parse("2026-01-01T00:00:00Z"), TOKEN_ONE));
+            repository.upsertAndSave(new AltAccount(offlineUuid, "Cracked", TokenType.OFFLINE, "",
+                    Instant.parse("2026-02-01T00:00:00Z"), null));
+
+            AltAccountRepository restored = new AltAccountRepository(file, storage);
+            restored.load();
+            assert restored.accounts().size() == 2;
+            AltAccount cracked = restored.accounts().get(0);
+            assert cracked.uuid.equals(offlineUuid);
+            assert cracked.tokenType == TokenType.OFFLINE;
+            assert !cracked.hasCredential();
+            assert restored.accounts().stream().filter(account -> account.tokenType.cracked()).count() == 1;
+
+            assert restored.removeAndSave(offlineUuid);
+            assert !restored.removeAndSave(offlineUuid);
+            assert restored.accounts().size() == 1;
+            AltAccountRepository afterRemove = new AltAccountRepository(file, storage);
+            afterRemove.load();
+            assert afterRemove.accounts().size() == 1;
+            assert afterRemove.accounts().get(0).uuid.equals(premiumUuid);
+
+            Files.delete(file);
+            Files.delete(directory);
+            directory = null;
+        } catch (Exception exception) {
+            throw new AssertionError("Alt Manager offline account self-check failed", exception);
         } finally {
             if (directory != null) {
                 try {

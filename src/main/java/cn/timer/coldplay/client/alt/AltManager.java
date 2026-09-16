@@ -7,9 +7,11 @@ import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.User;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
+import net.minecraft.client.gui.screens.TitleScreen;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.chat.Component;
 
 import java.io.IOException;
@@ -17,6 +19,7 @@ import java.time.Instant;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -24,6 +27,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 public final class AltManager implements AutoCloseable {
+    /** The launcher title ID; refresh tokens pasted into the Premium tab are exchanged with it. */
+    static final String DEFAULT_CLIENT_ID = "00000000402B5328";
+    private static final int TITLE_BUTTON_WIDTH = 200;
+    private static final int TITLE_BUTTON_HEIGHT = 20;
+    private static final int TITLE_ROW_STEP = 24;
+    /** Less than a full step, so the Options row still clears the version line on a 240px-tall GUI. */
+    private static final int TITLE_SHIFT = 16;
+
     private final AltAccountRepository repository = new AltAccountRepository();
     private final ProxyManager proxies = new ProxyManager();
     private final AuthService authentication = new AuthService(proxies);
@@ -40,16 +51,34 @@ public final class AltManager implements AutoCloseable {
         proxies.update(repository.proxy());
         repository.setProxy(proxies.snapshot());
         ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
-            if (screen instanceof JoinMultiplayerScreen) {
-                Screens.getButtons(screen).add(Button.builder(Component.literal("Alts"), input ->
-                                client.setScreen(new AltManagerScreen(screen, this)))
-                        .bounds(5, 5, 50, 20).build());
+            if (screen instanceof TitleScreen) {
+                addTitleButton(client, screen, width, height);
             }
         });
     }
 
-    List<AltAccount> accounts() {
-        return repository.accounts();
+    /** Inserts "Alt Manager" as the next full-width row and pushes the rows below it down one step. */
+    private void addTitleButton(Minecraft client, Screen screen, int width, int height) {
+        int mainRows = client.isDemo() ? 2 : 3;
+        int rowY = height / 4 + 48 + TITLE_ROW_STEP * mainRows;
+        List<AbstractWidget> buttons = Screens.getButtons(screen);
+        for (AbstractWidget widget : buttons) {
+            // the copyright link hugs the bottom edge and stays put
+            if (widget.getY() >= rowY && widget.getY() < height - TITLE_BUTTON_HEIGHT) {
+                widget.setY(widget.getY() + TITLE_SHIFT);
+            }
+        }
+        buttons.add(Button.builder(Component.literal("Alt Manager"),
+                        button -> client.setScreen(new AltManagerScreen(screen, this)))
+                .bounds(width / 2 - TITLE_BUTTON_WIDTH / 2, rowY, TITLE_BUTTON_WIDTH, TITLE_BUTTON_HEIGHT)
+                .build());
+    }
+
+    /** Saved accounts of one tab, newest login first. */
+    List<AltAccount> accounts(boolean cracked) {
+        return repository.accounts().stream()
+                .filter(account -> account.tokenType.cracked() == cracked)
+                .toList();
     }
 
     ProxySnapshot proxy() {
@@ -60,6 +89,11 @@ public final class AltManager implements AutoCloseable {
         return busy.get();
     }
 
+    /** An empty token or a name-derived (version 3) UUID marks a session no server can verify. */
+    static boolean offlineSession(User user) {
+        return user == null || user.getAccessToken().isEmpty() || user.getProfileId().version() == 3;
+    }
+
     AccountStatus status(AltAccount account) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.getUser() != null && account.uuid.equals(minecraft.getUser().getProfileId())) {
@@ -68,7 +102,7 @@ public final class AltManager implements AutoCloseable {
         if (account.uuid.equals(failedAccount)) {
             return AccountStatus.FAILED;
         }
-        return account.hasCredential() ? AccountStatus.SAVED : AccountStatus.NEEDS_TOKEN;
+        return account.tokenType.cracked() || account.hasCredential() ? AccountStatus.SAVED : AccountStatus.NEEDS_TOKEN;
     }
 
     void updateProxy(ProxySnapshot snapshot) {
@@ -86,8 +120,22 @@ public final class AltManager implements AutoCloseable {
         }
     }
 
+    /** True once the account is gone from disk; a failed write keeps it and is logged. */
+    boolean remove(UUID uuid) {
+        try {
+            return repository.removeAndSave(uuid);
+        } catch (IOException exception) {
+            logFailure("ALT_STORE_REMOVE", 0, exception);
+            return false;
+        }
+    }
+
     void login(TokenType type, String enteredCredential, String clientId, UUID selectedUuid,
                Consumer<ActionResult> callback) {
+        if (type.cracked()) {
+            callback.accept(ActionResult.failure(AltError.TOKEN_REQUIRED));
+            return;
+        }
         LoginRequest request = resolveRequest(type, enteredCredential, clientId, selectedUuid);
         if (request.credential().isBlank()) {
             callback.accept(ActionResult.failure(AltError.TOKEN_REQUIRED));
@@ -116,18 +164,31 @@ public final class AltManager implements AutoCloseable {
         });
     }
 
-    void testProxy(String savedServer, Consumer<ActionResult> callback) {
+    /** Cracked session, applied at once on the client thread; nothing is checked remotely. */
+    void loginOffline(String name, Consumer<ActionResult> callback) {
         if (!busy.compareAndSet(false, true)) {
             return;
         }
-        ProxySnapshot snapshot = proxies.snapshot();
-        executor.execute(() -> {
-            ActionResult result = proxies.test(snapshot, savedServer);
-            Minecraft.getInstance().execute(() -> {
-                busy.set(false);
-                callback.accept(result);
-            });
-        });
+        try {
+            UUID uuid = UUIDUtil.createOfflinePlayerUUID(name);
+            GameProfile profile = new GameProfile(uuid, name);
+            User user = new User(name, uuid, "", Optional.empty(), Optional.empty());
+            if (!replaceSession(user, profile)) {
+                callback.accept(ActionResult.failure(AltError.UNKNOWN));
+                return;
+            }
+            failedAccount = null;
+            try {
+                repository.upsertAndSave(new AltAccount(uuid, name, TokenType.OFFLINE, "", Instant.now(), null));
+            } catch (IOException exception) {
+                logFailure("ALT_STORE_OFFLINE", 0, exception);
+                callback.accept(ActionResult.failure(AltError.STORAGE_FAILED));
+                return;
+            }
+            callback.accept(ActionResult.success("Offline session: " + name));
+        } finally {
+            busy.set(false);
+        }
     }
 
     public ProxyHandler serverProxyHandler() {
@@ -152,10 +213,12 @@ public final class AltManager implements AutoCloseable {
         AltAccount selected = repository.accounts().stream()
                 .filter(account -> account.uuid.equals(selectedUuid))
                 .findFirst().orElse(null);
-        if (selected == null || !selected.hasCredential()) {
+        if (selected == null || selected.tokenType.cracked() || !selected.hasCredential()) {
             return new LoginRequest(type, "", clientId, selectedUuid);
         }
-        return new LoginRequest(selected.tokenType, selected.credential, selected.clientId, selectedUuid);
+        // accounts saved without a client ID were exchanged with the default one
+        String savedClientId = selected.clientId.isEmpty() ? DEFAULT_CLIENT_ID : selected.clientId;
+        return new LoginRequest(selected.tokenType, selected.credential, savedClientId, selectedUuid);
     }
 
     private void finishLogin(LoginRequest request, AuthResult result, AltError completionError,
@@ -176,7 +239,7 @@ public final class AltManager implements AutoCloseable {
                 return;
             }
             failedAccount = null;
-            callback.accept(ActionResult.success("Logged in as " + result.profile.name() + "."));
+            callback.accept(ActionResult.success("Logged in as " + result.profile.name()));
         } finally {
             busy.set(false);
         }
