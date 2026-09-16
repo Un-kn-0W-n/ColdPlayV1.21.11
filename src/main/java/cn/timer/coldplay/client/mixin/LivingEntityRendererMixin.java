@@ -8,16 +8,23 @@ import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
+import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.util.ARGB;
 import net.minecraft.world.entity.LivingEntity;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(LivingEntityRenderer.class)
 abstract class LivingEntityRendererMixin {
+    @Shadow
+    public abstract Identifier getTextureLocation(LivingEntityRenderState state);
+
     @Inject(
             method = "extractRenderState(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;F)V",
             at = @At("TAIL")
@@ -41,6 +48,17 @@ abstract class LivingEntityRendererMixin {
 
     @ModifyExpressionValue(
             method = "submit(Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/renderer/state/CameraRenderState;)V",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/entity/LivingEntityRenderer;getRenderType(Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;ZZZ)Lnet/minecraft/client/renderer/rendertype/RenderType;")
+    )
+    private RenderType coldplay$chamsMaterial(RenderType original, LivingEntityRenderState state) {
+        EntityESP entityEsp = ClientCore.get().entityEsp();
+        return entityEsp != null && entityEsp.usesChams() && state.getData(EntityESP.COLOR) != null
+                && state.getData(BackTrack.REAL_COLOR) == null
+                ? RenderTypes.textSeeThrough(getTextureLocation(state)) : original;
+    }
+
+    @ModifyExpressionValue(
+            method = "submit(Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/renderer/state/CameraRenderState;)V",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/entity/LivingEntityRenderer;getModelTint(Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;)I")
     )
     private int coldplay$chamsTint(int original, LivingEntityRenderState state) {
@@ -48,9 +66,6 @@ abstract class LivingEntityRendererMixin {
         if (backTrackColor != null) {
             return ARGB.multiply(original, backTrackColor);
         }
-        EntityESP entityEsp = ClientCore.get().entityEsp();
-        Integer color = state.getData(EntityESP.COLOR);
-        return entityEsp != null && entityEsp.usesChams() && color != null
-                ? ARGB.multiply(original, color) : original;
+        return original;
     }
 }
