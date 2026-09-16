@@ -16,10 +16,13 @@ import net.minecraft.gizmos.Gizmos;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.entity.BedBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
@@ -38,11 +41,13 @@ public final class BlockESP extends Module {
 
     private final BooleanSetting chests = addOwnerSetting(new BooleanSetting("Chests", true));
     private final ColorSetting chestsColor = addChildSetting(chests, new ColorSetting("Color", 0xFFC8AA00));
+    private final BooleanSetting beds = addOwnerSetting(new BooleanSetting("Beds", false));
+    private final ColorSetting bedsColor = addChildSetting(beds, new ColorSetting("Color", 0xFFFF3C3C));
 
     private final Set<Long> drawnPairs = new HashSet<>();
 
     public BlockESP() {
-        super("BlockESP", "Highlights chests through walls", Category.VISUALS, GLFW.GLFW_KEY_UNKNOWN);
+        super("BlockESP", "Highlights chests and beds through walls", Category.VISUALS, GLFW.GLFW_KEY_UNKNOWN);
     }
 
     @Override
@@ -50,11 +55,14 @@ public final class BlockESP extends Module {
         Minecraft minecraft = Minecraft.getInstance();
         ClientLevel level = minecraft.level;
         LocalPlayer player = minecraft.player;
-        if (level == null || player == null || !chests.get()) {
+        boolean drawChests = chests.get();
+        boolean drawBeds = beds.get();
+        if (level == null || player == null || !drawChests && !drawBeds) {
             return;
         }
 
-        GizmoStyle style = style(chestsColor.get(), width.get(), opacity.get());
+        GizmoStyle chestStyle = drawChests ? style(chestsColor.get(), width.get(), opacity.get()) : null;
+        GizmoStyle bedStyle = drawBeds ? style(bedsColor.get(), width.get(), opacity.get()) : null;
         double maxRange = range.get();
         int radius = chunkRadius(maxRange);
         int centreX = SectionPos.blockToSectionCoord(player.getBlockX());
@@ -68,16 +76,23 @@ public final class BlockESP extends Module {
                 }
 
                 for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
-                    if (!(blockEntity instanceof ChestBlockEntity) || blockEntity.isRemoved()) {
+                    if (blockEntity.isRemoved()) {
+                        continue;
+                    }
+                    // Typed first, so the block entities of no interest never reach the range maths.
+                    boolean chest = blockEntity instanceof ChestBlockEntity;
+                    boolean bed = !chest && blockEntity instanceof BedBlockEntity;
+                    if (!(chest && drawChests || bed && drawBeds)) {
                         continue;
                     }
                     BlockPos pos = blockEntity.getBlockPos();
                     if (!EntityESP.inRange(player.distanceToSqr(Vec3.atCenterOf(pos)), maxRange)) {
                         continue;
                     }
-                    AABB box = chestBox(level, pos, blockEntity.getBlockState(), drawnPairs);
+                    BlockState state = blockEntity.getBlockState();
+                    AABB box = chest ? chestBox(level, pos, state, drawnPairs) : bedBox(level, pos, state);
                     if (box != null) {
-                        Gizmos.cuboid(box, style).setAlwaysOnTop();
+                        Gizmos.cuboid(box, chest ? chestStyle : bedStyle).setAlwaysOnTop();
                     }
                 }
             }
@@ -111,7 +126,20 @@ public final class BlockESP extends Module {
         AABB partner = bounds(level, partnerPos, state.setValue(ChestBlock.TYPE, type.getOpposite()));
         return partner == null ? own : own.minmax(partner);
     }
-    
+
+    static AABB bedBox(BlockGetter level, BlockPos pos, BlockState state) {
+        AABB own = bounds(level, pos, state);
+        if (own == null || !state.hasProperty(BedBlock.PART)) {
+            return own;
+        }
+        if (state.getValue(BedBlock.PART) != BedPart.HEAD) {
+            return null;
+        }
+        AABB foot = bounds(level, pos.relative(BedBlock.getConnectedDirection(state)), state);
+        return foot == null ? own : own.minmax(foot);
+    }
+
+
     static AABB bounds(BlockGetter level, BlockPos pos, BlockState state) {
         VoxelShape shape = state.getShape(level, pos);
         return shape.isEmpty() ? null : shape.bounds().move(pos);
