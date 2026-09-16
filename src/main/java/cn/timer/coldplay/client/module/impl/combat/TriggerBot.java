@@ -3,7 +3,6 @@ package cn.timer.coldplay.client.module.impl.combat;
 import cn.timer.coldplay.client.module.Category;
 import cn.timer.coldplay.client.module.Module;
 import cn.timer.coldplay.client.setting.BooleanSetting;
-import cn.timer.coldplay.client.setting.RangeSetting;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -20,6 +19,10 @@ import org.lwjgl.glfw.GLFW;
  * Queues an attack click instead of attacking, so vanilla's own startAttack performs the hit. That
  * is what keeps the miss lockout, the spear stab path, the item reach component and the packet
  * order right without restating any of them here.
+ *
+ * <p>The swing is held until it is worth the most: vanilla scales base damage by
+ * {@code 0.2 + charge * charge * 0.8} and only allows a critical above nine tenths of charge, so a
+ * spammed hit lands for a fifth of a timed one.
  */
 public final class TriggerBot extends Module {
     private final BooleanSetting players = addSetting(new BooleanSetting("Players", true));
@@ -27,19 +30,10 @@ public final class TriggerBot extends Module {
     private final BooleanSetting animals = addSetting(new BooleanSetting("Animals", false));
     private final BooleanSetting invisible = addSetting(new BooleanSetting("Invisible", false));
     private final BooleanSetting npc = addSetting(new BooleanSetting("NPC", false));
-    private final BooleanSetting cooldown = addSetting(new BooleanSetting("Cooldown", true));
-    private final RangeSetting delay = addSetting(new RangeSetting("Delay", 0, 0, 0, 500, 10));
-
-    private long nextAttackAt;
 
     public TriggerBot() {
         super("TriggerBot", "Attacks the entity under the crosshair", Category.COMBAT,
                 GLFW.GLFW_KEY_UNKNOWN);
-    }
-
-    @Override
-    protected void onEnable() {
-        nextAttackAt = System.nanoTime();
     }
 
     /**
@@ -62,21 +56,39 @@ public final class TriggerBot extends Module {
                 || (!invisible.get() && target.isInvisibleTo(player))) {
             return;
         }
-        if (cooldown.get() && player.getAttackStrengthScale(0.0F) < 1.0F) {
+
+        // 0.5F is the partial tick Player.baseDamageScaleFactor itself reads, so this is full
+        // damage on the exact tick the server will agree it is, not one tick later.
+        if (player.getAttackStrengthScale(0.5F) < 1.0F) {
+            return;
+        }
+        if (risingIntoCrit(!player.onGround(), player.getDeltaMovement().y, player.fallDistance,
+                critAvailable(player))) {
             return;
         }
 
-        long now = System.nanoTime();
-        if (now - nextAttackAt < 0L) {
-            return;
-        }
         KeyMapping attack = minecraft.options.keyAttack;
         // Unbound resolves to InputConstants.UNKNOWN, which every other unbound mapping shares.
         if (attack.isUnbound()) {
             return;
         }
         KeyMapping.click(KeyBindingHelper.getBoundKeyOf(attack));
-        nextAttackAt = now + delay.sampleMillis() * 1_000_000L;
+    }
+
+    /** Everything canCriticalAttack asks for that a jump will not change on its own. */
+    private static boolean critAvailable(LocalPlayer player) {
+        return !player.isSprinting() && !player.onClimbable() && !player.isInWater()
+                && !player.isPassenger() && !player.isMobilityRestricted();
+    }
+
+    /**
+     * A critical needs the player already falling, so a fully charged swing taken on the way up is
+     * worth holding: the same hit lands for half again as much a few ticks later. Only an ascent is
+     * waited on, never a hover, so the wait is bounded by the arc and the module cannot stall.
+     */
+    static boolean risingIntoCrit(boolean airborne, double verticalSpeed, double fallDistance,
+                                  boolean critAvailable) {
+        return critAvailable && airborne && fallDistance <= 0.0 && verticalSpeed > 0.0;
     }
 
     /** Free of Minecraft state so the category gate itself is testable. */
