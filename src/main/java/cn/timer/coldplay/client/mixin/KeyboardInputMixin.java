@@ -3,7 +3,6 @@ package cn.timer.coldplay.client.mixin;
 import cn.timer.coldplay.client.ClientCore;
 import cn.timer.coldplay.client.manager.RotationManager;
 import cn.timer.coldplay.client.module.impl.combat.WTap;
-import cn.timer.coldplay.client.ClientCore;
 import cn.timer.coldplay.client.module.impl.movement.Sprint;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.ClientInput;
@@ -51,7 +50,7 @@ abstract class KeyboardInputMixin extends ClientInput {
 
         ClientCore core = ClientCore.get();
         WTap wTap = core.initialized() ? core.modules().get(WTap.class) : null;
-        Input tapped = wTap == null ? keyPresses : wTap.applyInput(minecraft, keyPresses);
+        Input tapped = wTap == null ? keyPresses : wTap.applyInput(keyPresses);
         if (tapped != keyPresses) {
             keyPresses = tapped;
             moveVector = new Vec2(
