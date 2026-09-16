@@ -14,6 +14,7 @@ import cn.timer.coldplay.client.module.impl.combat.KillAura;
 import cn.timer.coldplay.client.module.impl.combat.TriggerBot;
 import cn.timer.coldplay.client.module.impl.combat.WTap;
 import cn.timer.coldplay.client.module.impl.movement.Sprint;
+import cn.timer.coldplay.client.module.impl.movement.Velocity;
 import cn.timer.coldplay.client.module.impl.utilities.ChestStealer;
 import cn.timer.coldplay.client.module.impl.utilities.InvManager;
 import cn.timer.coldplay.client.module.impl.visuals.ClickGuiModule;
@@ -85,6 +86,7 @@ public final class ClientCore {
         modules.register(triggerBot);
         modules.register(new AimAssist());
         modules.register(new Sprint());
+        modules.register(new Velocity());
         invManager = new InvManager();
         modules.register(invManager);
         chestStealer = new ChestStealer(invManager);
