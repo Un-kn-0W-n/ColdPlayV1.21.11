@@ -131,7 +131,7 @@ public final class EntityESP extends Module {
         BooleanSetting filter;
         ColorSetting color;
         if (entity instanceof Player player) {
-            boolean fakePlayer = AntiBot.get().result(player).classification() == AntiBot.Classification.BOT;
+            boolean fakePlayer = AntiBot.get().isBot(player);
             filter = fakePlayer ? npc : players;
             color = fakePlayer ? npcColor : playersColor;
         } else if (entity instanceof Npc) {

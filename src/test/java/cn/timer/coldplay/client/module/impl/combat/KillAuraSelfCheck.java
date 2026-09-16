@@ -2,6 +2,7 @@ package cn.timer.coldplay.client.module.impl.combat;
 
 import cn.timer.coldplay.client.alt.AltManagerSelfCheck;
 import cn.timer.coldplay.client.manager.RotationManagerSelfCheck;
+import cn.timer.coldplay.client.mixin.LivingEntityMixinSelfCheck;
 import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
 
@@ -30,6 +31,9 @@ public final class KillAuraSelfCheck {
         assert KillAura.clickDelayMillis(8.0, 12.0, 0.0) == 125L;
         assert KillAura.clickDelayMillis(8.0, 12.0, 1.0) == 83L;
         assert KillAura.clickDelayMillis(12.0, 8.0, 0.0) == 125L;
+
+        // Last: it bootstraps the vanilla registries, which wraps System.out for the rest of the JVM.
+        LivingEntityMixinSelfCheck.main(args);
     }
 
     private static boolean close(float first, float second) {
