@@ -9,7 +9,9 @@ import java.util.UUID;
 
 enum TokenType {
     ACCESS_TOKEN("Access token"),
-    REFRESH_TOKEN("Refresh token");
+    REFRESH_TOKEN("Refresh token"),
+    /** Cracked account: no credential, the session is built from the name alone. */
+    OFFLINE("Offline");
 
     private final String label;
 
@@ -21,18 +23,14 @@ enum TokenType {
         return label;
     }
 
-    TokenType next() {
-        return this == ACCESS_TOKEN ? REFRESH_TOKEN : ACCESS_TOKEN;
+    boolean cracked() {
+        return this == OFFLINE;
     }
 }
 
 enum ProxyProtocol {
     HTTP,
-    SOCKS5;
-
-    ProxyProtocol next() {
-        return this == HTTP ? SOCKS5 : HTTP;
-    }
+    SOCKS5
 }
 
 enum AccountStatus {
