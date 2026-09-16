@@ -1,0 +1,76 @@
+plugins {
+    id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    implementation("net.raphimc:MinecraftAuth:5.0.1") {
+        exclude group: "com.google.code.gson", module: "gson"
+    }
+    include "net.raphimc:MinecraftAuth:5.0.1"
+    include "net.lenni0451.commons:httpclient:1.9.2"
+    include "net.lenni0451.commons:gson:1.9.2"
+    implementation include("io.netty:netty-handler-proxy:4.2.7.Final")
+    implementation include("io.netty:netty-codec-socks:4.2.7.Final")
+    implementation "io.projectreactor.netty:reactor-netty-http:1.3.0"
+    include "io.projectreactor.netty:reactor-netty-http:1.3.0"
+    include "io.projectreactor.netty:reactor-netty-core:1.3.0"
+    include "io.projectreactor:reactor-core:3.8.0"
+    include "org.reactivestreams:reactive-streams:1.0.4"
+    include "io.netty:netty-resolver-dns:4.2.7.Final"
+    include "io.netty:netty-codec-dns:4.2.7.Final"
+    include "io.netty:netty-codec-http2:4.2.7.Final"
+}
+
+processResources {
+    inputs.property 'version', project.version
+
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+tasks.register('selfCheck', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'cn.timer.coldplay.client.module.impl.combat.KillAuraSelfCheck'
+    enableAssertions = true
+}
+
+tasks.register('invManagerSelfCheck', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'cn.timer.coldplay.client.module.impl.utilities.InvManagerSelfCheck'
+    enableAssertions = true
+}
+
+tasks.register('chestStealerSelfCheck', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'cn.timer.coldplay.client.module.impl.utilities.ChestStealerSelfCheck'
+    enableAssertions = true
+}
+
+tasks.named('test') {
+    failOnNoDiscoveredTests = false
+}
