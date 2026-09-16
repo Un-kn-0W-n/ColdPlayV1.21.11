@@ -50,25 +50,10 @@ java {
     targetCompatibility = JavaVersion.VERSION_21
 }
 
-tasks.register('selfCheck', JavaExec) {
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'cn.timer.coldplay.client.module.impl.combat.KillAuraSelfCheck'
-    enableAssertions = true
-}
-
-tasks.register('invManagerSelfCheck', JavaExec) {
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'cn.timer.coldplay.client.module.impl.utilities.InvManagerSelfCheck'
-    enableAssertions = true
-}
-
-tasks.register('chestStealerSelfCheck', JavaExec) {
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'cn.timer.coldplay.client.module.impl.utilities.ChestStealerSelfCheck'
-    enableAssertions = true
+// Self-check runners live in src/test, which is kept local and not distributed.
+// Their JavaExec tasks live in selfchecks.gradle so this file stays free of them.
+if (file('selfchecks.gradle').exists()) {
+    apply from: 'selfchecks.gradle'
 }
 
 tasks.named('test') {
