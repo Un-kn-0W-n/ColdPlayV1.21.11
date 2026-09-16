@@ -12,10 +12,13 @@ import net.fabricmc.fabric.api.client.rendering.v1.world.WorldExtractionContext;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.OptionInstance;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
+import net.minecraft.gizmos.Gizmos;
+import net.minecraft.util.ARGB;
 import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.animal.Animal;
@@ -54,8 +57,8 @@ public final class EntityESP extends Module {
     private final BooleanSetting esp = addOwnerSetting(new BooleanSetting("ESP", true));
     private final ModeSetting mode = addChildSetting(esp,
             new ModeSetting("Mode", TWO_D, TWO_D, OUTLINE, CHAMS));
-    // Appended last: SettingsPanel groups a child under the owner it follows, and Module.suffix()
-    // takes the first mode setting, which must stay the ESP one.
+    // Appended after the ESP group: SettingsPanel groups a child under the owner it follows, and
+    // Module.suffix() takes the first mode setting, which must stay the ESP one.
     private final BooleanSetting nameTags = addOwnerSetting(new BooleanSetting("NameTags", false));
     private final BooleanSetting tagItems = addChildSetting(nameTags, new BooleanSetting("Items", true));
     private final BooleanSetting tagArmor = addChildSetting(nameTags, new BooleanSetting("Armor", true));
@@ -65,9 +68,18 @@ public final class EntityESP extends Module {
     private final NumberSetting tagOffset = addChildSetting(nameTags,
             new NumberSetting("Offset", 0.6, 0.0, 2.0, 0.05));
     private final ColorSetting tagBorder = addChildSetting(nameTags, new ColorSetting("Border", 0xFF000000));
+    private final BooleanSetting tracers = addOwnerSetting(new BooleanSetting("Tracers", false));
+    private final NumberSetting tracerWidth = addChildSetting(tracers,
+            new NumberSetting("Width", 2.0, 0.5, 5.0, 0.5));
+    // Bottoms out at 5 rather than 0: ColorSetting pins the alpha to FF, so this is the only
+    // handle on line opacity and an enabled-but-invisible tracer would just look broken.
+    private final NumberSetting tracerOpacity = addChildSetting(tracers,
+            new NumberSetting("Opacity", 255.0, 5.0, 255.0, 5.0));
 
     private final List<ScreenBox> boxes = new ArrayList<>();
     private final List<NameTags.Placed> tags = new ArrayList<>();
+    /** What view bobbing was before Tracers took it, or null while the vanilla value is untouched. */
+    private Boolean bobViewBeforeTracers;
 
     public EntityESP() {
         super("EntityESP", "Highlights valid entities", Category.VISUALS, GLFW.GLFW_KEY_UNKNOWN);
@@ -158,10 +170,98 @@ public final class EntityESP extends Module {
         }
     }
 
+    /**
+     * Tracers ride the world pass instead of the 2D one: the vanilla gizmo collector already clips
+     * the far end against the near plane, so a target behind the camera still yields a line running
+     * off the correct screen edge, which is the whole point of a tracer. The 2D lists cover only
+     * what survived frustum culling, so they are no use here.
+     */
+    @Override
+    protected void onRender(DeltaTracker deltaTracker) {
+        Minecraft minecraft = Minecraft.getInstance();
+        Player localPlayer = minecraft.player;
+        boolean active = tracers.get();
+        // Ahead of the world guards: the toggle is what drives bobbing, not whether a frame drew.
+        syncViewBobbing(active, minecraft.options.bobView());
+        if (!active || localPlayer == null || minecraft.level == null) {
+            return;
+        }
+
+        Camera camera = minecraft.gameRenderer.getMainCamera();
+        Vec3 origin = tracerOrigin(camera.position(), camera.forwardVector());
+        float partialTick = deltaTracker.getGameTimeDeltaPartialTick(false);
+        float width = tracerWidth.get().floatValue();
+        double opacity = tracerOpacity.get();
+        // The box query is only a coarse prefilter; colorFor() applies the real spherical range.
+        for (LivingEntity entity : minecraft.level.getEntitiesOfClass(LivingEntity.class,
+                localPlayer.getBoundingBox().inflate(range.get()))) {
+            Integer color = colorFor(entity);
+            if (color != null) {
+                // Interpolated, so the far end does not jitter between ticks.
+                Vec3 target = tracerTarget(entity.getPosition(partialTick), entity.getBbHeight());
+                Gizmos.line(origin, target, tracerColor(color, opacity), width).setAlwaysOnTop();
+            }
+        }
+    }
+
+    /**
+     * A line that starts at the camera projects to a single point, so the origin sits one block
+     * down the view axis: that lands it on the crosshair whatever the field of view, and gives the
+     * line a real screen-space length.
+     */
+    static Vec3 tracerOrigin(Vec3 cameraPosition, Vector3fc forward) {
+        return cameraPosition.add(forward.x(), forward.y(), forward.z());
+    }
+
+    /** Aims at the middle of the entity rather than its feet. */
+    static Vec3 tracerTarget(Vec3 feet, float height) {
+        return feet.add(0.0, height * 0.5, 0.0);
+    }
+
+    /** Below 255 the gizmo collector routes the line to the translucent pass. */
+    static int tracerColor(int color, double opacity) {
+        return ARGB.color((int) Math.round(opacity), color);
+    }
+
+    /**
+     * Head bob swings the camera, and every tracer is anchored to it, so the whole fan sweeps with
+     * the walk cycle. Turning tracers on forces bobbing off and remembers what it was; turning them
+     * off hands it back, but only if it was on to begin with. A value the player switched on
+     * themselves mid-session is therefore left alone rather than stamped back over.
+     */
+    private void syncViewBobbing(boolean tracersActive, OptionInstance<Boolean> bobView) {
+        Boolean next = nextViewBobbing(tracersActive, bobView.get());
+        if (next != null) {
+            bobView.set(next);
+        }
+    }
+
+    /**
+     * The whole decision, split out because OptionInstance.set reaches for the Minecraft singleton
+     * and so cannot run outside the game. Returns what bobbing must become, or null to leave it be.
+     */
+    Boolean nextViewBobbing(boolean tracersActive, boolean currentBobView) {
+        if (tracersActive) {
+            if (bobViewBeforeTracers != null) {
+                return null;
+            }
+            bobViewBeforeTracers = currentBobView;
+            return Boolean.FALSE;
+        }
+        if (bobViewBeforeTracers == null) {
+            return null;
+        }
+        boolean restore = bobViewBeforeTracers;
+        bobViewBeforeTracers = null;
+        return restore ? Boolean.TRUE : null;
+    }
+
     @Override
     protected void onDisable() {
         boxes.clear();
         tags.clear();
+        // onRender stops firing once the module is off, so this is the only chance to give it back.
+        syncViewBobbing(false, Minecraft.getInstance().options.bobView());
     }
 
     private boolean uses(String selectedMode) {
