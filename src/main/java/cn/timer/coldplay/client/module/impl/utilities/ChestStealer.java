@@ -9,6 +9,7 @@ import net.minecraft.client.gui.screens.inventory.ContainerScreen;
 import net.minecraft.client.gui.screens.inventory.ShulkerBoxScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.resources.language.I18n;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.player.Inventory;
@@ -17,8 +18,6 @@ import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -32,6 +31,8 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class ChestStealer extends Module {
     private static final long CONFIRMATION_TIMEOUT_NANOS = 1_000_000_000L;
     private static final double MOVEMENT_EPSILON_SQUARED = 1.0E-8;
+    private static final List<String> CONTAINER_TITLE_KEYS = List.of("container.chest", "container.chestDouble",
+            "container.barrel", "container.enderchest", "container.shulkerBox", "entity.minecraft.chest_minecart");
 
     private final RangeSetting delay = addSetting(new RangeSetting("Delay", 100, 200, 25, 400, 5));
     private final InvManager invManager;
@@ -177,9 +178,9 @@ public final class ChestStealer extends Module {
             return null;
         }
 
-        // Server NPC and compass menus reuse chest screens, so demand a real container block under the crosshair.
-        if (!(minecraft.hitResult instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK
-                || level.getBlockState(hit.getBlockPos()).getMenuProvider(level, hit.getBlockPos()) == null) {
+        // Server NPC and compass menus reuse chest screens, so only trust default container titles.
+        String title = screen.getTitle().getString().trim();
+        if (CONTAINER_TITLE_KEYS.stream().noneMatch(key -> I18n.get(key).equalsIgnoreCase(title))) {
             return null;
         }
 
