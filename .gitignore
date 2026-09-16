@@ -17,6 +17,7 @@ usercache.json
 servers.dat
 *.token
 *.pem
+graphify-out/
 
 # Logs and crash dumps
 /logs/

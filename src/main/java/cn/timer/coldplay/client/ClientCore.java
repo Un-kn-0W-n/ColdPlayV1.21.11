@@ -11,6 +11,7 @@ import cn.timer.coldplay.client.module.impl.combat.AimAssist;
 import cn.timer.coldplay.client.module.impl.combat.AntiBot;
 import cn.timer.coldplay.client.module.impl.combat.BackTrack;
 import cn.timer.coldplay.client.module.impl.combat.KillAura;
+import cn.timer.coldplay.client.module.impl.combat.TriggerBot;
 import cn.timer.coldplay.client.module.impl.combat.WTap;
 import cn.timer.coldplay.client.module.impl.movement.Sprint;
 import cn.timer.coldplay.client.module.impl.utilities.ChestStealer;
@@ -80,6 +81,8 @@ public final class ClientCore {
         AttackEntityCallback.EVENT.register(wTap::onAttack);
         modules.register(backTrack);
         AttackEntityCallback.EVENT.register(backTrack::onAttack);
+        TriggerBot triggerBot = new TriggerBot();
+        modules.register(triggerBot);
         modules.register(new AimAssist());
         modules.register(new Sprint());
         invManager = new InvManager();
@@ -107,6 +110,7 @@ public final class ClientCore {
             antiBot.tick(client);
             backTrack.tick(client);
             wTap.tick(client);
+            triggerBot.tick(client);
             if (killAura.enabled()) {
                 killAura.preTick(client);
             }
