@@ -18,6 +18,7 @@ import cn.timer.coldplay.client.module.impl.movement.Sprint;
 import cn.timer.coldplay.client.module.impl.movement.Velocity;
 import cn.timer.coldplay.client.module.impl.utilities.ChestStealer;
 import cn.timer.coldplay.client.module.impl.utilities.InvManager;
+import cn.timer.coldplay.client.module.impl.visuals.BlockESP;
 import cn.timer.coldplay.client.module.impl.visuals.ClickGuiModule;
 import cn.timer.coldplay.client.module.impl.visuals.EntityESP;
 import cn.timer.coldplay.client.module.impl.visuals.FullBright;
@@ -99,6 +100,7 @@ public final class ClientCore {
         modules.register(hud);
         entityEsp = new EntityESP();
         modules.register(entityEsp);
+        modules.register(new BlockESP());
         modules.register(new ClickGuiModule());
         altManager = new AltManager();
         altManager.initialize();
