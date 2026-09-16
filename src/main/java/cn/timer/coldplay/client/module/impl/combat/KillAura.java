@@ -16,12 +16,18 @@ import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.npc.Npc;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Comparator;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class KillAura extends Module {
@@ -38,11 +44,14 @@ public final class KillAura extends Module {
     private final NumberSetting minCps = addSetting(new NumberSetting("Min CPS", 8.0, 1.0, 20.0, 1.0));
     private final NumberSetting maxCps = addSetting(new NumberSetting("Max CPS", 12.0, 1.0, 20.0, 1.0));
 
+    private final BackTrack backTrack;
+
     private LivingEntity target;
     private long nextAttackAt;
 
-    public KillAura() {
+    public KillAura(BackTrack backTrack) {
         super("KillAura", "Silently attacks the nearest valid target", Category.COMBAT, GLFW.GLFW_KEY_UNKNOWN);
+        this.backTrack = Objects.requireNonNull(backTrack, "backTrack");
     }
 
     @Override
@@ -68,19 +77,22 @@ public final class KillAura extends Module {
 
         Vec3 eyes = player.getEyePosition();
         Vec3 look = player.getLookAngle();
+        double reach = range.get();
+        // A rewound hitbox can sit well outside the live one, so the query has to reach further
+        // than the attack range or the target would be filtered out before it is ever rewound.
+        double search = reach + (backTrack.enabled() ? BackTrack.TRACKING_RADIUS : 0.0);
         target = minecraft.level.getEntitiesOfClass(
                         LivingEntity.class,
-                        player.getBoundingBox().inflate(range.get()),
-                        entity -> validTarget(player, entity) && player.closerThan(entity, range.get())
-                                && withinFov(look, entity.getBoundingBox().getCenter().subtract(eyes), fov.get()))
+                        player.getBoundingBox().inflate(search),
+                        entity -> validTarget(player, entity) && aimable(entity, eyes, look, reach))
                 .stream()
-                .min(Comparator.comparingDouble(player::distanceToSqr))
+                .min(Comparator.comparingDouble(entity -> backTrack.rewound(entity).distanceToSqr(eyes)))
                 .orElse(null);
         if (target == null) {
             return;
         }
 
-        Vec3 direction = target.getBoundingBox().getCenter().subtract(eyes);
+        Vec3 direction = backTrack.rewound(target).getCenter().subtract(eyes);
         Vec2 rotation = rotationTo(direction);
         RotationManager rotations = RotationManager.getInstance();
         rotations.request(this, rotation.y, rotation.x, ROTATION_PRIORITY, TURN_RATE);
@@ -91,14 +103,18 @@ public final class KillAura extends Module {
         LivingEntity victim = target;
         if (player == null || minecraft.gameMode == null || victim == null || minecraft.screen != null
                 || !minecraft.isWindowActive() || !minecraft.mouseHandler.isMouseGrabbed()
-                || !validTarget(player, victim) || !player.closerThan(victim, range.get())) {
+                || !validTarget(player, victim)) {
+            return;
+        }
+
+        AABB box = backTrack.rewound(victim);
+        if (!withinReach(player.getEyePosition(), box, range.get())) {
             return;
         }
 
         RotationManager rotations = RotationManager.getInstance();
-        EntityHitResult hit = rotations.getEntityHitResult();
         long now = System.nanoTime();
-        if (rotations.owns(this) && hit != null && hit.getEntity() == victim
+        if (rotations.owns(this) && aimedAt(player, rotations, victim, box)
                 && now - nextAttackAt >= 0L && !player.isUsingItem()) {
             minecraft.gameMode.attack(player, victim);
             player.swing(InteractionHand.MAIN_HAND);
@@ -123,6 +139,40 @@ public final class KillAura extends Module {
             return animals.get();
         }
         return entity instanceof Npc && npc.get();
+    }
+
+    /** Reach and field of view are judged against one rewound hitbox, read once so they agree. */
+    private boolean aimable(LivingEntity entity, Vec3 eyes, Vec3 look, double reach) {
+        AABB box = backTrack.rewound(entity);
+        return withinReach(eyes, box, reach)
+                && withinFov(look, box.getCenter().subtract(eyes), fov.get());
+    }
+
+    /**
+     * Vanilla's crosshair pick resolves against live hitboxes, so it can never confirm a rewound
+     * one. Only when the hitbox is actually rewound do we trace it ourselves, still honouring the
+     * blocks in between so we never swing through a wall.
+     */
+    private boolean aimedAt(LocalPlayer player, RotationManager rotations, LivingEntity victim, AABB box) {
+        if (!BackTrack.separated(box, victim.getBoundingBox())) {
+            EntityHitResult hit = rotations.getEntityHitResult();
+            return hit != null && hit.getEntity() == victim;
+        }
+
+        Vec3 eyes = player.getEyePosition();
+        Vec3 end = eyes.add(rotations.getServerLookVector().scale(range.get()));
+        Optional<Vec3> aim = box.clip(eyes, end);
+        if (aim.isEmpty()) {
+            return false;
+        }
+        BlockHitResult blocked = player.level().clip(new ClipContext(
+                eyes, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, player));
+        return blocked.getType() == HitResult.Type.MISS
+                || eyes.distanceToSqr(aim.get()) <= eyes.distanceToSqr(blocked.getLocation());
+    }
+
+    static boolean withinReach(Vec3 eyes, AABB box, double range) {
+        return box.distanceToSqr(eyes) <= range * range;
     }
 
     static Vec2 rotationTo(Vec3 direction) {

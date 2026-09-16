@@ -72,12 +72,12 @@ public final class ClientCore {
         AntiBot antiBot = AntiBot.get();
         modules.register(antiBot);
         antiBot.setEnabled(true);
-        KillAura killAura = new KillAura();
+        BackTrack backTrack = new BackTrack();
+        KillAura killAura = new KillAura(backTrack);
         modules.register(killAura);
         WTap wTap = new WTap();
         modules.register(wTap);
         AttackEntityCallback.EVENT.register(wTap::onAttack);
-        BackTrack backTrack = new BackTrack();
         modules.register(backTrack);
         AttackEntityCallback.EVENT.register(backTrack::onAttack);
         modules.register(new AimAssist());
@@ -100,7 +100,7 @@ public final class ClientCore {
                 Identifier.fromNamespaceAndPath("coldplay", "entity_esp"), entityEsp::render2D);
         registerStatusBars();
         WorldRenderEvents.END_EXTRACTION.register(entityEsp::extract2D);
-        WorldRenderEvents.END_EXTRACTION.register(backTrack::extractRealPosition);
+        WorldRenderEvents.END_EXTRACTION.register(backTrack::extractRewind);
 
         ClientLifecycleEvents.CLIENT_STARTED.register(this::initializeUi);
         ClientTickEvents.START_CLIENT_TICK.register(client -> {
@@ -133,15 +133,15 @@ public final class ClientCore {
             }
         });
         ClientWorldEvents.AFTER_CLIENT_WORLD_CHANGE.register((client, world) -> {
-            backTrack.discardAndClear();
+            backTrack.clear();
             resetInventoryState();
         });
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
-            backTrack.discardAndClear();
+            backTrack.clear();
             resetInventoryState();
         });
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
-            backTrack.discardAndClear();
+            backTrack.clear();
             invManager.reset();
             chestStealer.reset();
             save();
