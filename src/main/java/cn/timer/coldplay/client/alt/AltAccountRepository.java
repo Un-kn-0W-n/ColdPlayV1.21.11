@@ -97,6 +97,25 @@ final class AltAccountRepository {
         }
     }
 
+    /** Drops the account and persists; the list is restored if the write fails. */
+    synchronized boolean removeAndSave(UUID uuid) throws IOException {
+        List<AltAccount> previous = List.copyOf(accounts);
+        if (!accounts.removeIf(existing -> existing.uuid.equals(uuid))) {
+            return false;
+        }
+        try {
+            save();
+        } catch (RuntimeException | IOException exception) {
+            accounts.clear();
+            accounts.addAll(previous);
+            if (exception instanceof IOException ioException) {
+                throw ioException;
+            }
+            throw new IOException("credential protection failed", exception);
+        }
+        return true;
+    }
+
     synchronized void save() throws IOException {
         JsonObject root = new JsonObject();
         root.addProperty("version", VERSION);

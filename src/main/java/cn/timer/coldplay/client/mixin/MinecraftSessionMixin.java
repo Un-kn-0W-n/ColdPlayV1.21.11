@@ -41,8 +41,10 @@ abstract class MinecraftSessionMixin {
     @Unique
     private void coldplay$replaceSession(User newUser, GameProfile profile) {
         Minecraft minecraft = (Minecraft) (Object) this;
-        UserApiService newUserApi = new YggdrasilAuthenticationService(getProxy())
-                .createUserApiService(newUser.getAccessToken());
+        // an offline (cracked) session has no token to back the user API, as in vanilla's offline mode
+        UserApiService newUserApi = newUser.getAccessToken().isEmpty()
+                ? UserApiService.OFFLINE
+                : new YggdrasilAuthenticationService(getProxy()).createUserApiService(newUser.getAccessToken());
         CompletableFuture<UserApiService.UserProperties> newProperties = CompletableFuture.supplyAsync(() -> {
             try {
                 return newUserApi.fetchProperties();
