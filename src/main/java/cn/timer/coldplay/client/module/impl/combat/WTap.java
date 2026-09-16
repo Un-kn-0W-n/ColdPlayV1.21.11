@@ -113,7 +113,7 @@ public final class WTap extends Module {
                 && EntitySelector.NO_CREATIVE_OR_SPECTATOR.test(target)
                 && target.isPickable() && target.isAttackable() && player.canAttack(target)
                 && (!(target instanceof Player other) || player.canHarmPlayer(other))
-                && AntiBot.get().canTarget(target);
+                && !AntiBot.get().isBot(target);
     }
 
     static boolean activates(double chance, double sample) {

@@ -110,7 +110,7 @@ public final class KillAura extends Module {
     private boolean validTarget(LocalPlayer player, LivingEntity entity) {
         if (entity == player || !EntitySelector.LIVING_ENTITY_STILL_ALIVE.test(entity)
                 || !EntitySelector.NO_CREATIVE_OR_SPECTATOR.test(entity) || !entity.isAttackable()
-                || (!invisible.get() && entity.isInvisibleTo(player)) || !AntiBot.get().canTarget(entity)) {
+                || (!invisible.get() && entity.isInvisibleTo(player)) || AntiBot.get().isBot(entity)) {
             return false;
         }
         if (entity instanceof Player) {

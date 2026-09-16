@@ -192,7 +192,7 @@ public final class AimAssist extends Module {
         if (candidate instanceof Player other && !player.canHarmPlayer(other)) {
             return false;
         }
-        if (!AntiBot.get().canTarget(candidate)) {
+        if (AntiBot.get().isBot(candidate)) {
             return false;
         }
         if (candidate instanceof Player) {
