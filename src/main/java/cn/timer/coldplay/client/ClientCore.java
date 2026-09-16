@@ -9,6 +9,7 @@ import cn.timer.coldplay.client.manager.RotationManager;
 import cn.timer.coldplay.client.module.ModuleManager;
 import cn.timer.coldplay.client.module.impl.combat.AimAssist;
 import cn.timer.coldplay.client.module.impl.combat.AntiBot;
+import cn.timer.coldplay.client.module.impl.combat.AutoClicker;
 import cn.timer.coldplay.client.module.impl.combat.BackTrack;
 import cn.timer.coldplay.client.module.impl.combat.KillAura;
 import cn.timer.coldplay.client.module.impl.combat.TriggerBot;
@@ -84,6 +85,8 @@ public final class ClientCore {
         AttackEntityCallback.EVENT.register(backTrack::onAttack);
         TriggerBot triggerBot = new TriggerBot();
         modules.register(triggerBot);
+        AutoClicker autoClicker = new AutoClicker();
+        modules.register(autoClicker);
         modules.register(new AimAssist());
         modules.register(new Sprint());
         modules.register(new Velocity());
@@ -113,6 +116,7 @@ public final class ClientCore {
             backTrack.tick(client);
             wTap.tick(client);
             triggerBot.tick(client);
+            autoClicker.tick(client);
             if (killAura.enabled()) {
                 killAura.preTick(client);
             }
