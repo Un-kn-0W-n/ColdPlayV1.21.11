@@ -55,6 +55,10 @@ desktop.ini
 
 # Tests stay local.
 /test/
+/src/test/
+**/*SelfCheck.java
+**/*FactsCheck.java
+selfchecks.gradle
 
 # Editor and tool state: every dot file or dot directory stays local.
 .*

@@ -17,6 +17,8 @@ import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -172,6 +174,12 @@ public final class ChestStealer extends Module {
             return null;
         }
         if (screen.getMenu() != menu || player.containerMenu != menu || !menu.stillValid(player)) {
+            return null;
+        }
+
+        // Server NPC and compass menus reuse chest screens, so demand a real container block under the crosshair.
+        if (!(minecraft.hitResult instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK
+                || level.getBlockState(hit.getBlockPos()).getMenuProvider(level, hit.getBlockPos()) == null) {
             return null;
         }
 
