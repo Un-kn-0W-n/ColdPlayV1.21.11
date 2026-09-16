@@ -1,7 +1,6 @@
 package cn.timer.coldplay.client.mixin;
 
 import cn.timer.coldplay.client.ClientCore;
-import cn.timer.coldplay.client.module.impl.combat.BackTrack;
 import cn.timer.coldplay.client.module.impl.visuals.EntityESP;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
@@ -24,7 +23,7 @@ abstract class EquipmentLayerRendererMixin {
                                            @Local(argsOnly = true) Object state) {
         EntityESP entityEsp = ClientCore.get().entityEsp();
         return entityEsp != null && entityEsp.usesChams() && state instanceof LivingEntityRenderState living
-                && living.getData(EntityESP.COLOR) != null && living.getData(BackTrack.REAL_COLOR) == null
+                && living.getData(EntityESP.COLOR) != null
                 ? RenderTypes.textSeeThrough(texture) : original.call(texture);
     }
 }

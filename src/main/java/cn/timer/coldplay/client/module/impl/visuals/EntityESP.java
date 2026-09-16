@@ -35,6 +35,8 @@ public final class EntityESP extends Module {
     public static final String CHAMS = "Chams";
     public static final RenderStateDataKey<Integer> COLOR =
             RenderStateDataKey.create(() -> "coldplay:entity_esp_color");
+    private static final RenderStateDataKey<NameTags.Tag> NAME_TAG =
+            RenderStateDataKey.create(() -> "coldplay:entity_esp_name_tag");
 
     private static final double NEAR_PLANE = 0.05;
 
@@ -52,8 +54,20 @@ public final class EntityESP extends Module {
     private final BooleanSetting esp = addOwnerSetting(new BooleanSetting("ESP", true));
     private final ModeSetting mode = addChildSetting(esp,
             new ModeSetting("Mode", TWO_D, TWO_D, OUTLINE, CHAMS));
+    // Appended last: SettingsPanel groups a child under the owner it follows, and Module.suffix()
+    // takes the first mode setting, which must stay the ESP one.
+    private final BooleanSetting nameTags = addOwnerSetting(new BooleanSetting("NameTags", false));
+    private final BooleanSetting tagItems = addChildSetting(nameTags, new BooleanSetting("Items", true));
+    private final BooleanSetting tagArmor = addChildSetting(nameTags, new BooleanSetting("Armor", true));
+    private final BooleanSetting tagHealth = addChildSetting(nameTags, new BooleanSetting("Health", true));
+    // The vanilla nameplate spans the head plus 0.275 to 0.5 blocks, so the 1.8.9 client's 0.25
+    // would put the bar on top of the name. 0.6 clears it; lower values overlap on purpose.
+    private final NumberSetting tagOffset = addChildSetting(nameTags,
+            new NumberSetting("Offset", 0.6, 0.0, 2.0, 0.05));
+    private final ColorSetting tagBorder = addChildSetting(nameTags, new ColorSetting("Border", 0xFF000000));
 
     private final List<ScreenBox> boxes = new ArrayList<>();
+    private final List<NameTags.Placed> tags = new ArrayList<>();
 
     public EntityESP() {
         super("EntityESP", "Highlights valid entities", Category.VISUALS, GLFW.GLFW_KEY_UNKNOWN);
@@ -62,6 +76,9 @@ public final class EntityESP extends Module {
     public void extractRenderState(LivingEntity entity, LivingEntityRenderState state) {
         Integer color = colorFor(entity);
         state.setData(COLOR, color);
+        // Equipment and scoreboard health are only reachable from the entity, so they are read here
+        // and carried on the state; the HUD pass never touches the world.
+        state.setData(NAME_TAG, color == null ? null : extractNameTag(entity));
         if (color == null) {
             return;
         }
@@ -77,10 +94,23 @@ public final class EntityESP extends Module {
         return uses(CHAMS);
     }
 
+    private NameTags.Tag extractNameTag(LivingEntity entity) {
+        if (!usesNameTags()) {
+            return null;
+        }
+        boolean bar = tagHealth.get();
+        NameTags.Tag tag = new NameTags.Tag(bar ? NameTags.healthFraction(entity) : 0.0F, bar,
+                NameTags.icons(entity, tagItems.get(), tagArmor.get()));
+        return tag.isEmpty() ? null : tag;
+    }
+
     public void extract2D(WorldExtractionContext context) {
         boxes.clear();
+        tags.clear();
         Minecraft minecraft = Minecraft.getInstance();
-        if (!uses(TWO_D) || minecraft.player == null || minecraft.level == null) {
+        boolean wantBoxes = uses(TWO_D);
+        boolean wantTags = usesNameTags();
+        if (!(wantBoxes || wantTags) || minecraft.player == null || minecraft.level == null) {
             return;
         }
 
@@ -91,31 +121,56 @@ public final class EntityESP extends Module {
             if (color == null) {
                 continue;
             }
-            ScreenBox box = projectBounds(context.gameRenderer(), context.camera(), state, width, height, color);
-            if (box != null) {
-                boxes.add(box);
+            if (wantBoxes) {
+                ScreenBox box = projectBounds(context.gameRenderer(), context.camera(), state, width, height, color);
+                if (box != null) {
+                    boxes.add(box);
+                }
+            }
+            NameTags.Tag tag = wantTags ? state.getData(NAME_TAG) : null;
+            if (tag != null) {
+                NameTags.Placed placed = projectTag(context.gameRenderer(), context.camera(), state,
+                        tag, width, height);
+                if (placed != null) {
+                    tags.add(placed);
+                }
             }
         }
     }
 
     public void render2D(GuiGraphics graphics, DeltaTracker ignored) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (!uses(TWO_D) || minecraft.player == null || minecraft.level == null) {
+        if (minecraft.player == null || minecraft.level == null) {
             boxes.clear();
+            tags.clear();
             return;
         }
-        for (ScreenBox box : boxes) {
-            graphics.renderOutline(box.left(), box.top(), box.width(), box.height(), box.color());
+        if (uses(TWO_D)) {
+            for (ScreenBox box : boxes) {
+                graphics.renderOutline(box.left(), box.top(), box.width(), box.height(), box.color());
+            }
+        }
+        if (usesNameTags()) {
+            int border = tagBorder.get();
+            for (NameTags.Placed placed : tags) {
+                NameTags.draw(graphics, placed, border);
+            }
         }
     }
 
     @Override
     protected void onDisable() {
         boxes.clear();
+        tags.clear();
     }
 
     private boolean uses(String selectedMode) {
         return enabled() && esp.get() && mode.get().equals(selectedMode);
+    }
+
+    /** Independent of the ESP modes, so tags also show alongside Outline and Chams. */
+    private boolean usesNameTags() {
+        return enabled() && nameTags.get();
     }
 
     private Integer colorFor(LivingEntity entity) {
@@ -160,6 +215,46 @@ public final class EntityESP extends Module {
         return distanceSquared <= range * range;
     }
 
+    /**
+     * True when the point is far enough in front of the camera to project. Behind the camera the
+     * perspective divide flips the sign, so the result still lands inside the viewport.
+     */
+    private static boolean inFront(Camera camera, double x, double y, double z) {
+        Vec3 position = camera.position();
+        Vector3fc forward = camera.forwardVector();
+        return (x - position.x) * forward.x()
+                + (y - position.y) * forward.y()
+                + (z - position.z) * forward.z() > NEAR_PLANE;
+    }
+
+    /** Normalized device coordinates to GUI pixels. */
+    static double screenX(double ndcX, int screenWidth) {
+        return (ndcX + 1.0) * screenWidth * 0.5;
+    }
+
+    static double screenY(double ndcY, int screenHeight) {
+        return (1.0 - ndcY) * screenHeight * 0.5;
+    }
+
+    private NameTags.Placed projectTag(GameRenderer renderer, Camera camera, EntityRenderState state,
+                                       NameTags.Tag tag, int width, int height) {
+        double x = state.x;
+        double y = state.y + state.boundingBoxHeight + tagOffset.get();
+        double z = state.z;
+        if (!inFront(camera, x, y, z)) {
+            return null;
+        }
+        Vec3 projected = renderer.projectPointToScreen(new Vec3(x, y, z));
+        double anchorX = screenX(projected.x, width);
+        double anchorY = screenY(projected.y, height);
+        if (!Double.isFinite(anchorX) || !Double.isFinite(anchorY)) {
+            return null;
+        }
+        int tagX = (int) Math.round(anchorX);
+        int tagY = (int) Math.round(anchorY);
+        return NameTags.onScreen(tagX, tagY, tag, width, height) ? new NameTags.Placed(tagX, tagY, tag) : null;
+    }
+
     private static ScreenBox projectBounds(GameRenderer renderer, Camera camera, EntityRenderState state,
                                            int width, int height, int color) {
         double halfWidth = state.boundingBoxWidth * 0.5;
@@ -169,8 +264,6 @@ public final class EntityESP extends Module {
         double maxY = state.y + state.boundingBoxHeight;
         double minZ = state.z - halfWidth;
         double maxZ = state.z + halfWidth;
-        Vec3 cameraPosition = camera.position();
-        Vector3fc forward = camera.forwardVector();
 
         double screenMinX = Double.POSITIVE_INFINITY;
         double screenMinY = Double.POSITIVE_INFINITY;
@@ -180,23 +273,20 @@ public final class EntityESP extends Module {
             double x = (corner & 1) == 0 ? minX : maxX;
             double y = (corner & 2) == 0 ? minY : maxY;
             double z = (corner & 4) == 0 ? minZ : maxZ;
-            double depth = (x - cameraPosition.x) * forward.x()
-                    + (y - cameraPosition.y) * forward.y()
-                    + (z - cameraPosition.z) * forward.z();
-            if (depth <= NEAR_PLANE) {
+            if (!inFront(camera, x, y, z)) {
                 continue;
             }
 
             Vec3 projected = renderer.projectPointToScreen(new Vec3(x, y, z));
-            double screenX = (projected.x + 1.0) * width * 0.5;
-            double screenY = (1.0 - projected.y) * height * 0.5;
-            if (!Double.isFinite(screenX) || !Double.isFinite(screenY)) {
+            double pointX = screenX(projected.x, width);
+            double pointY = screenY(projected.y, height);
+            if (!Double.isFinite(pointX) || !Double.isFinite(pointY)) {
                 continue;
             }
-            screenMinX = Math.min(screenMinX, screenX);
-            screenMinY = Math.min(screenMinY, screenY);
-            screenMaxX = Math.max(screenMaxX, screenX);
-            screenMaxY = Math.max(screenMaxY, screenY);
+            screenMinX = Math.min(screenMinX, pointX);
+            screenMinY = Math.min(screenMinY, pointY);
+            screenMaxX = Math.max(screenMaxX, pointX);
+            screenMaxY = Math.max(screenMaxY, pointY);
         }
         return clipBounds(screenMinX, screenMinY, screenMaxX, screenMaxY, width, height, color);
     }
