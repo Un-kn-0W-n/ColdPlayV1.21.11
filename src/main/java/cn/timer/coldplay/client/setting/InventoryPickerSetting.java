@@ -508,10 +508,17 @@ public abstract class InventoryPickerSetting<T> extends Setting<T> {
         @Override
         public void resolve(HolderLookup.Provider provider) {
             Objects.requireNonNull(provider, "provider");
+            // Unresolvable entries stay put for the same reason as in Cleaner.resolve: an item
+            // missing from this registry cannot be in the inventory either, so it matches
+            // nothing, and keeping the raw json preserves the player's layout across servers.
             for (List<Preference> slot : slots) {
-                slot.removeIf(preference -> preference instanceof ItemPreference item && !item.item().resolve(provider));
+                for (Preference preference : slot) {
+                    if (preference instanceof ItemPreference item) {
+                        item.item().resolve(provider);
+                    }
+                }
             }
-            exclusions.removeIf(item -> !item.resolve(provider));
+            exclusions.forEach(item -> item.resolve(provider));
         }
 
         @Override
@@ -694,7 +701,9 @@ public abstract class InventoryPickerSetting<T> extends Setting<T> {
         @Override
         public void resolve(HolderLookup.Provider provider) {
             Objects.requireNonNull(provider, "provider");
-            itemModes.entrySet().removeIf(entry -> !entry.getKey().resolve(provider));
+            // An entry this registry cannot parse is kept as raw json: it may resolve on the
+            // next server, and dropping it here would erase it from the config on the next save.
+            itemModes.keySet().forEach(item -> item.resolve(provider));
         }
 
         @Override

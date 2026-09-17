@@ -219,6 +219,9 @@ public final class InvManager extends Module {
         sessionLevel = level;
         sessionScreen = screen;
         reactionDeadline = now + ThreadLocalRandom.current().nextLong(300L, 601L) * 1_000_000L;
+        // The first action of a session waits only for the reaction delay above, but both
+        // deadlines still have to be real nanoTime values rather than a zero sentinel.
+        actionDeadline = now;
         previousX = player.getX();
         previousY = player.getY();
         previousZ = player.getZ();
@@ -516,14 +519,19 @@ public final class InvManager extends Module {
         if (minimum == previousDelayMinimum && maximum == previousDelayMaximum) {
             return;
         }
-        if (actionDeadline - now > 0L) {
-            long remaining = actionDeadline - now;
-            long lower = minimum * 1_000_000L;
-            long upper = maximum * 1_000_000L;
-            actionDeadline = now + Math.max(lower, Math.min(remaining, upper));
-        }
+        actionDeadline = clampDeadline(now, actionDeadline, minimum, maximum);
         previousDelayMinimum = minimum;
         previousDelayMaximum = maximum;
+    }
+
+    static long clampDeadline(long now, long deadline, int minimumMillis, int maximumMillis) {
+        if (deadline - now <= 0L) {
+            return deadline;
+        }
+        long remaining = deadline - now;
+        long minimum = minimumMillis * 1_000_000L;
+        long maximum = maximumMillis * 1_000_000L;
+        return now + Math.max(minimum, Math.min(remaining, maximum));
     }
 
     static long deadlineAfter(long now, int delayMillis) {
@@ -531,7 +539,9 @@ public final class InvManager extends Module {
     }
 
     static long sampledDeadline(long now, boolean instant, IntSupplier sampleMillis) {
-        return instant ? 0L : deadlineAfter(now, sampleMillis.getAsInt());
+        // "Instant" is a deadline of now, not 0: these are System.nanoTime() values, whose
+        // origin is arbitrary, so 0 is a timestamp rather than a "no delay" sentinel.
+        return instant ? now : deadlineAfter(now, sampleMillis.getAsInt());
     }
 
     static <T> T firstNonNull(Supplier<? extends T> first, Supplier<? extends T> second,
