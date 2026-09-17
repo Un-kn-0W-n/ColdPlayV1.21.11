@@ -52,7 +52,6 @@ public final class EntityESP extends Module {
             RenderStateDataKey.create(() -> "coldplay:entity_esp_name_tag");
 
     private static final double NEAR_PLANE = 0.05;
-    /** Where an arrow's colour is still fully red, and where it has faded all the way to black. */
     private static final double FADE_NEAR = 5.0;
     private static final double FADE_FAR = 15.0;
 
@@ -70,31 +69,27 @@ public final class EntityESP extends Module {
     private final BooleanSetting esp = addOwnerSetting(new BooleanSetting("ESP", true));
     private final ModeSetting mode = addChildSetting(esp,
             new ModeSetting("Mode", TWO_D, TWO_D, OUTLINE, CHAMS));
-    // Appended after the ESP group: SettingsPanel groups a child under the owner it follows, and
-    // Module.suffix() takes the first mode setting, which must stay the ESP one.
+
     private final BooleanSetting nameTags = addOwnerSetting(new BooleanSetting("NameTags", false));
     private final BooleanSetting tagItems = addChildSetting(nameTags, new BooleanSetting("Items", true));
     private final BooleanSetting tagArmor = addChildSetting(nameTags, new BooleanSetting("Armor", true));
     private final BooleanSetting tagHealth = addChildSetting(nameTags, new BooleanSetting("Health", true));
-    // The vanilla nameplate spans the head plus 0.275 to 0.5 blocks, so the 1.8.9 client's 0.25
-    // would put the bar on top of the name. 0.6 clears it; lower values overlap on purpose.
+
     private final NumberSetting tagOffset = addChildSetting(nameTags,
             new NumberSetting("Offset", 0.6, 0.0, 2.0, 0.05));
     private final ColorSetting tagBorder = addChildSetting(nameTags, new ColorSetting("Border", 0xFF000000));
     private final BooleanSetting tracers = addOwnerSetting(new BooleanSetting("Tracers", false));
-    // A second mode setting is safe here only because it trails the ESP one: suffix() reports the
-    // first, and ConfigManager keys children as "Tracers.Mode", clear of "ESP.Mode".
+
     private final ModeSetting tracerMode = addChildSetting(tracers,
             new ModeSetting("Mode", LINES, LINES, ARROWS));
     private final NumberSetting tracerWidth = addChildSetting(tracers,
             new NumberSetting("Width", 2.0, 0.5, 5.0, 0.5));
-    // Bottoms out at 5 rather than 0: ColorSetting pins the alpha to FF, so this is the only
-    // handle on line opacity and an enabled-but-invisible tracer would just look broken.
+
     private final NumberSetting tracerOpacity = addChildSetting(tracers,
             new NumberSetting("Opacity", 255.0, 5.0, 255.0, 5.0));
     private final NumberSetting arrowSize = addChildSetting(tracers,
             new NumberSetting("Size", 6.0, 3.0, 16.0, 1.0));
-    // Far enough out that the ring clears the vanilla crosshair, which spans 15px.
+
     private final NumberSetting arrowRadius = addChildSetting(tracers,
             new NumberSetting("Radius", 30.0, 10.0, 120.0, 1.0));
 
@@ -111,8 +106,7 @@ public final class EntityESP extends Module {
     public void extractRenderState(LivingEntity entity, LivingEntityRenderState state) {
         Integer color = colorFor(entity);
         state.setData(COLOR, color);
-        // Equipment and scoreboard health are only reachable from the entity, so they are read here
-        // and carried on the state; the HUD pass never touches the world.
+
         state.setData(NAME_TAG, color == null ? null : extractNameTag(entity));
         if (color == null) {
             return;
@@ -178,36 +172,27 @@ public final class EntityESP extends Module {
         }
     }
 
-    /**
-     * Arrows are collected from the world rather than from the render states the boxes use: the
-     * states are what survived frustum culling, and an off-screen entity is exactly what did not.
-     * The box query is only a coarse prefilter; colorFor() applies the real spherical range.
-     */
     private void extractArrows(WorldExtractionContext context, Player localPlayer, int width, int height) {
         Camera camera = context.camera();
         Vec3 eye = camera.position();
         float partialTick = context.tickCounter().getGameTimeDeltaPartialTick(false);
         for (LivingEntity entity : context.world().getEntitiesOfClass(LivingEntity.class,
                 localPlayer.getBoundingBox().inflate(range.get()))) {
-            // colorFor() is only the filter here, not the palette: an arrow is coloured by how far
-            // away its target is, so the type colours the boxes and lines use do not apply.
+
             if (colorFor(entity) == null) {
                 continue;
             }
             // Interpolated, so the bearing does not step between ticks.
             Vec3 feet = entity.getPosition(partialTick);
             double halfWidth = entity.getBbWidth() * 0.5;
-            // A hitbox that still lands on screen needs no arrow, and projectBox() returns null for
-            // one that is off the viewport or wholly behind the camera: that is the same question.
-            // Only whether it projects matters, so the box it would have drawn is thrown away.
+
             if (projectBox(context.gameRenderer(), camera,
                     feet.x - halfWidth, feet.y, feet.z - halfWidth,
                     feet.x + halfWidth, feet.y + entity.getBbHeight(), feet.z + halfWidth,
                     width, height, 0) != null) {
                 continue;
             }
-            // Measured from the player rather than the camera, so third person does not recolour
-            // the ring; that is also the distance the Range filter above works in.
+
             arrows.add(new ScreenArrow(bearingAngle(camera.yRot(), eye.x, eye.z, feet.x, feet.z),
                     distanceColor(Math.sqrt(localPlayer.distanceToSqr(entity)))));
         }
@@ -237,12 +222,6 @@ public final class EntityESP extends Module {
         }
     }
 
-    /**
-     * Draws one arrowhead per off-screen target, on a ring around the crosshair. Every drawing
-     * method GuiGraphics exposes is an axis aligned rectangle, so an arrowhead built out of them
-     * has to step its two sloped edges a whole pixel at a time -- at a 6px arrow that is most of
-     * the shape. Submitting a triangle straight to the collector lets the GPU rasterize the slopes.
-     */
     private void drawArrows(GuiGraphics graphics) {
         if (arrows.isEmpty()) {
             return;
@@ -258,34 +237,18 @@ public final class EntityESP extends Module {
         }
     }
 
-    /**
-     * Red up close, fading to black from 15 blocks out and staying there. An arrow says nothing
-     * about depth on its own -- an off-screen target has no box and no tracer length to read -- so
-     * the ring carries distance in its colour instead. Opacity is applied later, over the top.
-     */
     static int distanceColor(double distance) {
         double fade = Math.clamp((FADE_FAR - distance) / (FADE_FAR - FADE_NEAR), 0.0, 1.0);
         return ARGB.color((int) Math.round(255 * fade), (int) Math.round(100 * fade),
                 (int) Math.round(100 * fade));
     }
 
-    /**
-     * Where a target sits on the crosshair ring, in y-down screen radians: straight ahead is up,
-     * right is right, behind is down. Yaw only, so pitching the camera does not swing the ring and
-     * looking straight up or down leaves it readable.
-     */
     static float bearingAngle(float cameraYaw, double cameraX, double cameraZ,
                               double targetX, double targetZ) {
         float wantYaw = (float) (Math.toDegrees(Math.atan2(targetZ - cameraZ, targetX - cameraX)) - 90.0);
         return (float) (Math.toRadians(Mth.wrapDegrees(wantYaw - cameraYaw)) - Math.PI / 2.0);
     }
 
-    /**
-     * Lines ride the world pass instead of the 2D one: the vanilla gizmo collector already clips
-     * the far end against the near plane, so a target behind the camera still yields a line running
-     * off the correct screen edge, which is the whole point of a tracer. The 2D lists cover only
-     * what survived frustum culling, so they are no use here.
-     */
     @Override
     protected void onRender(DeltaTracker deltaTracker) {
         Minecraft minecraft = Minecraft.getInstance();
@@ -315,32 +278,18 @@ public final class EntityESP extends Module {
         }
     }
 
-    /**
-     * A line that starts at the camera projects to a single point, so the origin sits one block
-     * down the view axis: that lands it on the crosshair whatever the field of view, and gives the
-     * line a real screen-space length.
-     */
     static Vec3 tracerOrigin(Vec3 cameraPosition, Vector3fc forward) {
         return cameraPosition.add(forward.x(), forward.y(), forward.z());
     }
 
-    /** Aims at the middle of the entity rather than its feet. */
     static Vec3 tracerTarget(Vec3 feet, float height) {
         return feet.add(0.0, height * 0.5, 0.0);
     }
 
-    /** Below 255 the gizmo collector routes the line to the translucent pass. */
     static int tracerColor(int color, double opacity) {
         return ARGB.color((int) Math.round(opacity), color);
     }
 
-    /**
-     * Head bob swings the camera, and every line is anchored to it, so the whole fan sweeps with
-     * the walk cycle. Turning Lines on forces bobbing off and remembers what it was; leaving Lines
-     * hands it back, but only if it was on to begin with. A value the player switched on themselves
-     * mid-session is therefore left alone rather than stamped back over. Arrows never take it:
-     * their bearing is yaw only, which bobbing does not touch.
-     */
     private void syncViewBobbing(boolean tracersActive, OptionInstance<Boolean> bobView) {
         Boolean next = nextViewBobbing(tracersActive, bobView.get());
         if (next != null) {
@@ -348,10 +297,6 @@ public final class EntityESP extends Module {
         }
     }
 
-    /**
-     * The whole decision, split out because OptionInstance.set reaches for the Minecraft singleton
-     * and so cannot run outside the game. Returns what bobbing must become, or null to leave it be.
-     */
     Boolean nextViewBobbing(boolean tracersActive, boolean currentBobView) {
         if (tracersActive) {
             if (bobViewBeforeTracers != null) {
@@ -433,10 +378,6 @@ public final class EntityESP extends Module {
         return distanceSquared <= range * range;
     }
 
-    /**
-     * True when the point is far enough in front of the camera to project. Behind the camera the
-     * perspective divide flips the sign, so the result still lands inside the viewport.
-     */
     private static boolean inFront(Camera camera, double x, double y, double z) {
         Vec3 position = camera.position();
         Vector3fc forward = camera.forwardVector();
@@ -537,24 +478,14 @@ public final class EntityESP extends Module {
         }
     }
 
-    /** An off-screen target's crosshair-ring bearing, in y-down screen radians, and its fade. */
     record ScreenArrow(float angle, int color) {
     }
 
-    /**
-     * One filled arrowhead, already in screen pixels, as a GUI element the collector can draw.
-     * Points are float, so the slopes land wherever the bearing puts them rather than on whole
-     * pixels; that is the whole reason this exists instead of a stack of rectangles.
-     */
     record ArrowHead(float tipX, float tipY, float rightX, float rightY, float leftX, float leftY,
                      int color, ScreenRectangle bounds) implements GuiElementRenderState {
-        /** Screen space already, so the vertices need no further transform. */
+
         private static final Matrix3x2f NO_TRANSFORM = new Matrix3x2f();
 
-        /**
-         * An arrowhead straddling the ring point: tip a whole size beyond it, back edge half a size
-         * inside it, and widest across the back. Same proportions as the 1.8.9 client.
-         */
         static ArrowHead of(float centerX, float centerY, float angle, float radius, float size,
                             int color) {
             double cos = Math.cos(angle);
@@ -564,8 +495,7 @@ public final class EntityESP extends Module {
             double backX = ringX - cos * (size * 0.5);
             double backY = ringY - sin * (size * 0.5);
             double half = size * 0.6;
-            // Right before left, which winds the triangle the same way as the quads GuiGraphics
-            // submits, so it survives if the GUI pipeline ever starts culling back faces.
+
             float tipX = (float) (ringX + cos * size);
             float tipY = (float) (ringY + sin * size);
             float rightX = (float) (backX + sin * half);
@@ -576,7 +506,6 @@ public final class EntityESP extends Module {
                     bounds(tipX, tipY, rightX, rightY, leftX, leftY));
         }
 
-        /** GuiRenderState silently drops an element with no bounds, so this is never null. */
         private static ScreenRectangle bounds(float tipX, float tipY, float rightX, float rightY,
                                               float leftX, float leftY) {
             int left = (int) Math.floor(Math.min(tipX, Math.min(rightX, leftX)));
@@ -588,8 +517,7 @@ public final class EntityESP extends Module {
 
         @Override
         public void buildVertices(VertexConsumer consumer) {
-            // The GUI pass draws indexed quads, so a triangle goes through as a quad whose last
-            // two corners coincide: the second half of it collapses to no area at all.
+
             consumer.addVertexWith2DPose(NO_TRANSFORM, tipX, tipY).setColor(color);
             consumer.addVertexWith2DPose(NO_TRANSFORM, rightX, rightY).setColor(color);
             consumer.addVertexWith2DPose(NO_TRANSFORM, leftX, leftY).setColor(color);
@@ -608,7 +536,7 @@ public final class EntityESP extends Module {
 
         @Override
         public ScreenRectangle scissorArea() {
-            return null; // nothing has a scissor open over the HUD when the ring draws
+            return null;
         }
     }
 }
