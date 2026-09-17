@@ -14,6 +14,7 @@ import cn.timer.coldplay.client.module.impl.combat.BackTrack;
 import cn.timer.coldplay.client.module.impl.combat.KillAura;
 import cn.timer.coldplay.client.module.impl.combat.TriggerBot;
 import cn.timer.coldplay.client.module.impl.combat.WTap;
+import cn.timer.coldplay.client.module.impl.movement.BridgeAssist;
 import cn.timer.coldplay.client.module.impl.movement.Sprint;
 import cn.timer.coldplay.client.module.impl.movement.Velocity;
 import cn.timer.coldplay.client.module.impl.utilities.ChestStealer;
@@ -90,6 +91,7 @@ public final class ClientCore {
         AutoClicker autoClicker = new AutoClicker();
         modules.register(autoClicker);
         modules.register(new AimAssist());
+        modules.register(new BridgeAssist());
         modules.register(new Sprint());
         modules.register(new Velocity());
         invManager = new InvManager();

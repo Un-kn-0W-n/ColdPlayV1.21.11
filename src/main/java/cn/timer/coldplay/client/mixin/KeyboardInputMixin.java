@@ -3,6 +3,7 @@ package cn.timer.coldplay.client.mixin;
 import cn.timer.coldplay.client.ClientCore;
 import cn.timer.coldplay.client.manager.RotationManager;
 import cn.timer.coldplay.client.module.impl.combat.WTap;
+import cn.timer.coldplay.client.module.impl.movement.BridgeAssist;
 import cn.timer.coldplay.client.module.impl.movement.Sprint;
 import cn.timer.coldplay.client.module.impl.movement.Velocity;
 import net.minecraft.client.Minecraft;
@@ -70,6 +71,14 @@ abstract class KeyboardInputMixin extends ClientInput {
                     tapped.left() == tapped.right() ? 0.0F : tapped.left() ? 1.0F : -1.0F,
                     tapped.forward() == tapped.backward() ? 0.0F : tapped.forward() ? 1.0F : -1.0F
             ).normalized();
+        }
+
+        // Last, so the forward exception reads the direction the player will actually travel: a
+        // remapped or back-tapped W is not moving forward. Shift never feeds moveVector, so unlike
+        // the WTap rewrite above this one needs no fix-up.
+        BridgeAssist bridgeAssist = core.initialized() ? core.modules().get(BridgeAssist.class) : null;
+        if (bridgeAssist != null && bridgeAssist.wantsSneak(player, minecraft.level, keyPresses)) {
+            keyPresses = BridgeAssist.withShift(keyPresses);
         }
     }
 }
