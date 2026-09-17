@@ -23,6 +23,7 @@ import cn.timer.coldplay.client.module.impl.visuals.ClickGuiModule;
 import cn.timer.coldplay.client.module.impl.visuals.EntityESP;
 import cn.timer.coldplay.client.module.impl.visuals.FullBright;
 import cn.timer.coldplay.client.module.impl.visuals.Hud;
+import cn.timer.coldplay.client.module.impl.visuals.Trajectories;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -101,6 +102,7 @@ public final class ClientCore {
         entityEsp = new EntityESP();
         modules.register(entityEsp);
         modules.register(new BlockESP());
+        modules.register(new Trajectories());
         modules.register(new ClickGuiModule());
         altManager = new AltManager();
         altManager.initialize();
