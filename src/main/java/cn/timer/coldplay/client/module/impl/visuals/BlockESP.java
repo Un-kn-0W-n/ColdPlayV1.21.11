@@ -5,6 +5,7 @@ import cn.timer.coldplay.client.module.Module;
 import cn.timer.coldplay.client.setting.BooleanSetting;
 import cn.timer.coldplay.client.setting.ColorSetting;
 import cn.timer.coldplay.client.setting.NumberSetting;
+import cn.timer.coldplay.client.util.Gizmo;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -13,7 +14,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.gizmos.GizmoStyle;
 import net.minecraft.gizmos.Gizmos;
-import net.minecraft.util.ARGB;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.BedBlock;
@@ -61,8 +61,8 @@ public final class BlockESP extends Module {
             return;
         }
 
-        GizmoStyle chestStyle = drawChests ? style(chestsColor.get(), width.get(), opacity.get()) : null;
-        GizmoStyle bedStyle = drawBeds ? style(bedsColor.get(), width.get(), opacity.get()) : null;
+        GizmoStyle chestStyle = drawChests ? Gizmo.style(chestsColor.get(), width.get(), opacity.get()) : null;
+        GizmoStyle bedStyle = drawBeds ? Gizmo.style(bedsColor.get(), width.get(), opacity.get()) : null;
         double maxRange = range.get();
         int radius = chunkRadius(maxRange);
         int centreX = SectionPos.blockToSectionCoord(player.getBlockX());
@@ -104,14 +104,6 @@ public final class BlockESP extends Module {
         return Mth.ceil(range / 16.0);
     }
 
-
-    static GizmoStyle style(int color, double width, double opacity) {
-        float strokeWidth = (float) width;
-        int alpha = (int) Math.round(opacity);
-        return alpha == 0
-                ? GizmoStyle.stroke(color, strokeWidth)
-                : GizmoStyle.strokeAndFill(color, strokeWidth, ARGB.color(alpha, color));
-    }
 
     static AABB chestBox(BlockGetter level, BlockPos pos, BlockState state, Set<Long> drawnPairs) {
         AABB own = bounds(level, pos, state);
