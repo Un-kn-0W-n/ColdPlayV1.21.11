@@ -586,7 +586,7 @@ public final class SettingsPanel {
         drawLabel(graphics, s, rowY, bx);
         int by = rowY + (ROW_H - box) / 2;
         // hover matches the click hit zone (the whole row), not just the little box
-        boolean hover = Draw.hovered(mouseX, mouseY, x, rowY, width, ROW_H);
+        boolean hover = Draw.hoveredExclusive(mouseX, mouseY, x, rowY, width, ROW_H);
         Draw.borderedRect(graphics, bx, by, bx + box, by + box, Theme.WELL,
                 hover ? Theme.CONTOUR : Theme.SEP);
         if (s.get()) {
@@ -607,7 +607,8 @@ public final class SettingsPanel {
         drawLabel(graphics, s, rowY, g[1]);
         int vy = Draw.textY(rowY, ROW_H);
         Draw.text(graphics, font, s.get(), g[0], vy, Theme.TEXT_DIM);
-        int arrowColor = Draw.hovered(mouseX, mouseY, x, rowY, width, ROW_H) ? Theme.TEXT : Theme.TEXT_MUTE;
+        int arrowColor = Draw.hoveredExclusive(mouseX, mouseY, x, rowY, width, ROW_H)
+                ? Theme.TEXT : Theme.TEXT_MUTE;
         Draw.text(graphics, font, "<", g[1], vy, arrowColor);
         Draw.text(graphics, font, ">", g[2], vy, arrowColor);
     }
@@ -1017,7 +1018,9 @@ public final class SettingsPanel {
                 continue;
             }
             int rh = rowHeight(s);
-            if (Draw.hovered(mouseX, mouseY, x, rowY, width, rh)) {
+            // Half-open: rows tile with `rowY += rh`, so an inclusive test would give the shared
+            // edge to both rows and this loop would hand every boundary pixel to the row above.
+            if (Draw.hoveredExclusive(mouseX, mouseY, x, rowY, width, rh)) {
                 handleSettingClick(s, button, mouseX, mouseY, rowY);
                 return true;
             }
@@ -1074,7 +1077,7 @@ public final class SettingsPanel {
     /** False when the click landed outside the shared picker areas. */
     private boolean handlePickerCommon(PickerUi ui, int button, int mouseX, int mouseY, int rowY,
                                        PickerActions actions) {
-        if (Draw.hovered(mouseX, mouseY, x, rowY, width, ROW_H)) {
+        if (Draw.hoveredExclusive(mouseX, mouseY, x, rowY, width, ROW_H)) {
             ui.open = !ui.open;
             ui.refresh(Minecraft.getInstance());
             return true;

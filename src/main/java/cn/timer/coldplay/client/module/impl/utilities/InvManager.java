@@ -33,7 +33,6 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
 public final class InvManager extends Module {
@@ -43,6 +42,15 @@ public final class InvManager extends Module {
     private static final int BACKPACK_START = Inventory.SELECTION_SIZE;
     private static final int BACKPACK_END = Inventory.INVENTORY_SIZE;
     private static final double MOVEMENT_EPSILON_SQUARED = 1.0E-8;
+    private static final int MILLIS_PER_TICK = 50;
+    /**
+     * "Instant" is a floor, not zero. This module is driven from END_CLIENT_TICK, so a gap of one
+     * tick is 20 actions a second -- and since the client runs up to ten catch-up ticks in one
+     * frame after a lag spike, ten of them could leave back to back. Two ticks halves both.
+     */
+    private static final int INSTANT_GAP_TICKS = 2;
+    private static final int REACTION_MIN_TICKS = 6;
+    private static final int REACTION_MAX_TICKS = 12;
 
     private final RangeSetting delay = addSetting(new RangeSetting("Delay", 100, 200, 50, 1000, 10));
     private final BooleanSetting autoArmor = addOwnerSetting(new BooleanSetting("AutoArmor", false));
@@ -68,16 +76,14 @@ public final class InvManager extends Module {
     private LocalPlayer sessionPlayer;
     private ClientLevel sessionLevel;
     private InventoryScreen sessionScreen;
-    private long reactionDeadline;
-    private long actionDeadline;
+    /** Ticks still owed before the next action may run; 0 means due. */
+    private int countdown;
     private boolean worked;
     private double previousX;
     private double previousY;
     private double previousZ;
     private int previousSelected;
     private int manualCooldown;
-    private int previousDelayMinimum = delay.lower();
-    private int previousDelayMaximum = delay.upper();
 
     public InvManager() {
         super("InvManager", "Manages armor, hotbar, and backpack items while inventory is open",
@@ -121,13 +127,14 @@ public final class InvManager extends Module {
         }
         InventoryScreen screen = (InventoryScreen) minecraft.screen;
         if (player != sessionPlayer || minecraft.level != sessionLevel || screen != sessionScreen) {
-            beginSession(player, minecraft.level, screen, System.nanoTime());
+            beginSession(player, minecraft.level, screen);
             return;
         }
 
-        long now = System.nanoTime();
-        clampActionDeadline(now);
-        if (!safeToAct(minecraft, player) || now - reactionDeadline < 0L || now - actionDeadline < 0L) {
+        // Both run on every tick: due() counts the cooldown down, and safeToAct is what tracks
+        // player movement and drains the manual-interaction cooldown.
+        boolean due = due();
+        if (!safeToAct(minecraft, player) || !due) {
             return;
         }
 
@@ -138,7 +145,7 @@ public final class InvManager extends Module {
         if (action != null) {
             minecraft.gameMode.handleInventoryMouseClick(player.inventoryMenu.containerId, action.menuSlot(),
                     action.button(), action.clickType(), player);
-            afterAction(action.kind(), now);
+            afterAction(action.kind());
             return;
         }
         if (!catalogReady && (autoHotBar.get() || cleaner.get())) {
@@ -213,15 +220,14 @@ public final class InvManager extends Module {
                 && screen.getMenu() == player.inventoryMenu && player.containerMenu == player.inventoryMenu;
     }
 
-    private void beginSession(LocalPlayer player, ClientLevel level, InventoryScreen screen, long now) {
+    private void beginSession(LocalPlayer player, ClientLevel level, InventoryScreen screen) {
         clearSession();
         sessionPlayer = player;
         sessionLevel = level;
         sessionScreen = screen;
-        reactionDeadline = now + ThreadLocalRandom.current().nextLong(300L, 601L) * 1_000_000L;
-        // The first action of a session waits only for the reaction delay above, but both
-        // deadlines still have to be real nanoTime values rather than a zero sentinel.
-        actionDeadline = now;
+        // Every session opens with a human reaction delay of 300-600 ms. No Instant setting
+        // shortens it -- those govern the gap between actions, not the time to the first one.
+        countdown = ThreadLocalRandom.current().nextInt(REACTION_MIN_TICKS, REACTION_MAX_TICKS + 1);
         previousX = player.getX();
         previousY = player.getY();
         previousZ = player.getZ();
@@ -503,45 +509,40 @@ public final class InvManager extends Module {
         return -1;
     }
 
-    private void afterAction(WorkKind kind, long now) {
+    /**
+     * Spends one tick of the cooldown and reports whether an action may run now. It does not
+     * re-arm the way AutoClicker's equivalent does: a due tick can still find nothing to do, and
+     * the gap is only chosen once an action actually lands.
+     */
+    boolean due() {
+        if (countdown > 0) {
+            countdown--;
+        }
+        return countdown == 0;
+    }
+
+    void afterAction(WorkKind kind) {
         worked = true;
         boolean instant = switch (kind) {
             case ARMOR -> instantArmor.get();
             case HOTBAR -> instantHotBar.get();
             case CLEANER -> instantClean.get();
         };
-        actionDeadline = sampledDeadline(now, instant, delay::sampleMillis);
+        countdown = instant ? INSTANT_GAP_TICKS
+                : gapTicks(delay.sampleMillis(), ThreadLocalRandom.current().nextDouble());
     }
 
-    private void clampActionDeadline(long now) {
-        int minimum = delay.lower();
-        int maximum = delay.upper();
-        if (minimum == previousDelayMinimum && maximum == previousDelayMaximum) {
-            return;
-        }
-        actionDeadline = clampDeadline(now, actionDeadline, minimum, maximum);
-        previousDelayMinimum = minimum;
-        previousDelayMaximum = maximum;
-    }
-
-    static long clampDeadline(long now, long deadline, int minimumMillis, int maximumMillis) {
-        if (deadline - now <= 0L) {
-            return deadline;
-        }
-        long remaining = deadline - now;
-        long minimum = minimumMillis * 1_000_000L;
-        long maximum = maximumMillis * 1_000_000L;
-        return now + Math.max(minimum, Math.min(remaining, maximum));
-    }
-
-    static long deadlineAfter(long now, int delayMillis) {
-        return now + delayMillis * 1_000_000L;
-    }
-
-    static long sampledDeadline(long now, boolean instant, IntSupplier sampleMillis) {
-        // "Instant" is a deadline of now, not 0: these are System.nanoTime() values, whose
-        // origin is arbitrary, so 0 is a timestamp rather than a "no delay" sentinel.
-        return instant ? now : deadlineAfter(now, sampleMillis.getAsInt());
+    /**
+     * A millisecond delay as a whole number of ticks. The module only looks at the world once per
+     * tick, so a wall-clock deadline can only ever be served on a tick boundary: 175 ms would
+     * always come out as 200 ms, and the shipped 100-200 ms range collapsed to a coin flip
+     * between 150 and 200. Rounding the leftover fraction at random instead spends the same
+     * ticks in the same proportion, so the <em>mean</em> gap is the one that was asked for.
+     */
+    static int gapTicks(int delayMillis, double roundSample) {
+        double ideal = delayMillis / (double) MILLIS_PER_TICK;
+        int gap = (int) ideal;
+        return Math.max(1, roundSample < ideal - gap ? gap + 1 : gap);
     }
 
     static <T> T firstNonNull(Supplier<? extends T> first, Supplier<? extends T> second,
@@ -555,16 +556,13 @@ public final class InvManager extends Module {
         sessionPlayer = null;
         sessionLevel = null;
         sessionScreen = null;
-        reactionDeadline = 0L;
-        actionDeadline = 0L;
+        countdown = 0;
         worked = false;
         previousX = 0.0;
         previousY = 0.0;
         previousZ = 0.0;
         previousSelected = -1;
         manualCooldown = 0;
-        previousDelayMinimum = delay.lower();
-        previousDelayMaximum = delay.upper();
     }
 
     static ArmorScore armorScore(ItemStack stack, EquipmentSlot slot) {
