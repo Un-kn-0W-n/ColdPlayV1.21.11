@@ -5,6 +5,7 @@ import cn.timer.coldplay.client.setting.ModeSetting;
 import cn.timer.coldplay.client.setting.Setting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.gui.GuiGraphics;
 import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.ArrayList;
@@ -126,5 +127,9 @@ public abstract class Module {
     }
 
     protected void onRender(DeltaTracker deltaTracker) {
+    }
+
+    /** HUD pass, after the world has rendered, so the camera already holds this frame's view. */
+    protected void onRender2D(GuiGraphics graphics, DeltaTracker deltaTracker) {
     }
 }

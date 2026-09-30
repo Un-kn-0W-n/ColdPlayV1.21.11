@@ -2,6 +2,7 @@ package cn.timer.coldplay.client.module;
 
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.gui.GuiGraphics;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -36,6 +37,14 @@ public final class ModuleManager {
         for (Module module : modules) {
             if (module.enabled()) {
                 module.onRender(deltaTracker);
+            }
+        }
+    }
+
+    public void render2D(GuiGraphics graphics, DeltaTracker deltaTracker) {
+        for (Module module : modules) {
+            if (module.enabled()) {
+                module.onRender2D(graphics, deltaTracker);
             }
         }
     }

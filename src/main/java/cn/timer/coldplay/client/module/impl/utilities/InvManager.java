@@ -1,10 +1,12 @@
 package cn.timer.coldplay.client.module.impl.utilities;
 
+import cn.timer.coldplay.client.manager.InventoryTransactions;
 import cn.timer.coldplay.client.module.Category;
 import cn.timer.coldplay.client.module.Module;
 import cn.timer.coldplay.client.setting.BooleanSetting;
 import cn.timer.coldplay.client.setting.InventoryPickerSetting;
 import cn.timer.coldplay.client.setting.RangeSetting;
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -41,14 +43,33 @@ public final class InvManager extends Module {
     };
     private static final int BACKPACK_START = Inventory.SELECTION_SIZE;
     private static final int BACKPACK_END = Inventory.INVENTORY_SIZE;
-    private static final double MOVEMENT_EPSILON_SQUARED = 1.0E-8;
+    /**
+     * Vanilla's own position-send threshold, and horizontal only. A player who has just stopped
+     * walking still drifts for several ticks before the client zeroes the residual velocity, and
+     * one standing on a slab, in water or on a mount never stops moving vertically at all --
+     * so a tighter bound, or one that counts Y, reads "standing still" as "moving" forever.
+     */
+    private static final double MOVEMENT_EPSILON_SQUARED = 9.0E-4;
     private static final int MILLIS_PER_TICK = 50;
     /**
-     * "Instant" is a floor, not zero. This module is driven from END_CLIENT_TICK, so a gap of one
-     * tick is 20 actions a second -- and since the client runs up to ten catch-up ticks in one
+     * Instant Swap is a floor, not zero. This module is driven from END_CLIENT_TICK, so a gap of
+     * one tick is 20 swaps a second -- and since the client runs up to ten catch-up ticks in one
      * frame after a lag spike, ten of them could leave back to back. Two ticks halves both.
      */
-    private static final int INSTANT_GAP_TICKS = 2;
+    private static final int INSTANT_SWAP_GAP_TICKS = 2;
+    /**
+     * Instant Clean runs on a wall clock, not on ticks and not on frames: one slot every 20 ms,
+     * 50 a second. The tick loop cannot express it (it only looks up every 50 ms) and the frame
+     * loop must not define it (the rate would follow the player's fps), so the render loop is
+     * only the sampler -- this interval is the rate.
+     */
+    static final long INSTANT_CLEAN_INTERVAL_NANOS = 20L * 1_000_000L;
+    /**
+     * Drops allowed in one frame. Every click lands whatever the container state id says, and
+     * InventoryTransactions keeps the emptied slots emptied while the resyncs arrive, so the
+     * whole backpack can go at once the way it did on 1.8.9 -- the cap is just its size.
+     */
+    static final int INSTANT_CLEAN_MAX_PER_FRAME = BACKPACK_END - BACKPACK_START;
     private static final int REACTION_MIN_TICKS = 6;
     private static final int REACTION_MAX_TICKS = 12;
 
@@ -70,6 +91,8 @@ public final class InvManager extends Module {
     private final BooleanSetting autoClose = addChildSetting(inventory,
             new BooleanSetting("Auto Close", false));
 
+    private final InventoryTransactions transactions = new InventoryTransactions();
+
     private LocalPlayer catalogPlayer;
     private ClientLevel catalogLevel;
     private boolean catalogNeedsResolve;
@@ -80,10 +103,13 @@ public final class InvManager extends Module {
     private int countdown;
     private boolean worked;
     private double previousX;
-    private double previousY;
     private double previousZ;
     private int previousSelected;
     private int manualCooldown;
+    /** Last tick's movement/cooldown verdict, sampled so the render loop can read it. */
+    private boolean tickBlocked;
+    /** Wall-clock deadline for the next Instant Clean drop. Seeded in beginSession. */
+    private long nextCleanAt;
 
     public InvManager() {
         super("InvManager", "Manages armor, hotbar, and backpack items while inventory is open",
@@ -131,8 +157,10 @@ public final class InvManager extends Module {
             return;
         }
 
-        // Both run on every tick: due() counts the cooldown down, and safeToAct is what tracks
-        // player movement and drains the manual-interaction cooldown.
+        // Both run on every tick regardless of the outcome: trackPlayer owns the movement delta
+        // and the cooldown drain, due() counts the action cooldown down.
+        transactions.begin(player.inventoryMenu);
+        trackPlayer(player);
         boolean due = due();
         if (!safeToAct(minecraft, player) || !due) {
             return;
@@ -143,8 +171,12 @@ public final class InvManager extends Module {
                 () -> autoHotBar.get() && catalogReady ? hotbarAction(player) : null,
                 () -> cleaner.get() && catalogReady ? cleanerAction(player) : null);
         if (action != null) {
-            minecraft.gameMode.handleInventoryMouseClick(player.inventoryMenu.containerId, action.menuSlot(),
-                    action.button(), action.clickType(), player);
+            if (action.kind() == WorkKind.CLEANER && instantClean.get()) {
+                // Owned by onRender. Returning rather than falling through is what keeps Auto
+                // Close from shutting the screen while drops are still outstanding.
+                return;
+            }
+            perform(minecraft, player, action);
             afterAction(action.kind());
             return;
         }
@@ -155,6 +187,74 @@ public final class InvManager extends Module {
             screen.onClose();
             clearSession();
         }
+    }
+
+    /**
+     * Instant Clean runs here rather than on the tick loop, because a 20 ms spacing cannot be
+     * expressed by something that only wakes every 50 ms. The render loop is the sampler, not the
+     * clock: the rate comes from {@link #INSTANT_CLEAN_INTERVAL_NANOS}, so it is the same at
+     * 30 fps and at 240.
+     */
+    @Override
+    protected void onRender(DeltaTracker deltaTracker) {
+        if (!instantClean.get() || !cleaner.get() || sessionScreen == null || countdown > 0) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        LocalPlayer player = minecraft.player;
+        if (player != sessionPlayer || minecraft.screen != sessionScreen
+                || !validEnvironment(minecraft, player) || !catalog().ready()
+                || !safeToAct(minecraft, player)) {
+            return;
+        }
+        long now = System.nanoTime();
+        nextCleanAt = cleanBaseline(now, nextCleanAt);
+        for (int drop = 0; drop < INSTANT_CLEAN_MAX_PER_FRAME && cleanDue(now, nextCleanAt); drop++) {
+            InventoryAction action = cleanerAction(player);
+            if (action == null) {
+                nextCleanAt = now + INSTANT_CLEAN_INTERVAL_NANOS;
+                return;
+            }
+            perform(minecraft, player, action);
+            worked = true;
+            // Advance by the interval, not from now, so a late frame is repaid on the next one
+            // and the long-run spacing stays 20 ms.
+            nextCleanAt += INSTANT_CLEAN_INTERVAL_NANOS;
+        }
+    }
+
+    /**
+     * The deadline this frame starts from. A stored deadline more than a frame's worth of
+     * catch-up in the past means the reaction delay just ended, or the client was away, so it
+     * restarts from now instead of owing a backlog. Every comparison is a subtraction, which
+     * stays correct when nanoTime wraps.
+     */
+    static long cleanBaseline(long now, long deadline) {
+        return now - deadline > INSTANT_CLEAN_INTERVAL_NANOS * INSTANT_CLEAN_MAX_PER_FRAME ? now : deadline;
+    }
+
+    static boolean cleanDue(long now, long deadline) {
+        return now - deadline >= 0L;
+    }
+
+    private void perform(Minecraft minecraft, LocalPlayer player, InventoryAction action) {
+        // Recorded first: the prediction is built from the state the click is about to change.
+        int inventorySlot = inventorySlot(action.menuSlot());
+        switch (action.clickType()) {
+            case THROW -> transactions.threw(inventorySlot);
+            case SWAP -> transactions.swapped(player.getInventory(), inventorySlot, action.button());
+            default -> transactions.quickMoved(inventorySlot);
+        }
+        minecraft.gameMode.handleInventoryMouseClick(player.inventoryMenu.containerId, action.menuSlot(),
+                action.button(), action.clickType(), player);
+    }
+
+    /** Inverse of {@link #menuSlot}: armour 5-8 run head first, the hotbar sits last at 36-44. */
+    static int inventorySlot(int menuSlot) {
+        if (menuSlot >= BACKPACK_END) {
+            return menuSlot - BACKPACK_END;
+        }
+        return menuSlot >= BACKPACK_START ? menuSlot : 44 - menuSlot;
     }
 
     public void markManualInteraction() {
@@ -228,31 +328,44 @@ public final class InvManager extends Module {
         // Every session opens with a human reaction delay of 300-600 ms. No Instant setting
         // shortens it -- those govern the gap between actions, not the time to the first one.
         countdown = ThreadLocalRandom.current().nextInt(REACTION_MIN_TICKS, REACTION_MAX_TICKS + 1);
+        nextCleanAt = System.nanoTime();
         previousX = player.getX();
-        previousY = player.getY();
         previousZ = player.getZ();
         previousSelected = player.getInventory().getSelectedSlot();
     }
 
-    private boolean safeToAct(Minecraft minecraft, LocalPlayer player) {
+    /**
+     * Per-tick bookkeeping: the movement delta and the manual-interaction cooldown. It must run
+     * exactly once a tick, so it stays on the tick loop -- the render loop reads the result
+     * through {@link #safeToAct} instead, which would otherwise measure deltas between frames
+     * and drain the cooldown several times a tick.
+     */
+    private void trackPlayer(LocalPlayer player) {
         int selected = player.getInventory().getSelectedSlot();
         double x = player.getX();
-        double y = player.getY();
         double z = player.getZ();
         double dx = x - previousX;
-        double dy = y - previousY;
         double dz = z - previousZ;
-        boolean displaced = dx * dx + dy * dy + dz * dz > MOVEMENT_EPSILON_SQUARED;
-        if (selected != previousSelected || displaced) {
+        // Only a hotbar change is a manual interaction. Drifting is not: arming the cooldown from
+        // it re-armed it every tick the player was still settling, which stalled the module
+        // outright rather than pausing it.
+        if (selected != previousSelected) {
             manualCooldown = 2;
         }
         previousSelected = selected;
         previousX = x;
-        previousY = y;
         previousZ = z;
-
+        tickBlocked = manualCooldown > 0 || dx * dx + dz * dz > MOVEMENT_EPSILON_SQUARED;
         if (manualCooldown > 0) {
             manualCooldown--;
+        }
+    }
+
+    /** Pure, so the render loop may ask as often as it likes. */
+    private boolean safeToAct(Minecraft minecraft, LocalPlayer player) {
+        // tickBlocked is last tick's sample; manualCooldown is also read live, so a click the
+        // player makes between two ticks stops the render loop on the very next frame.
+        if (tickBlocked || manualCooldown > 0) {
             return false;
         }
         Input input = player.input == null || player.input.keyPresses == null
@@ -267,10 +380,10 @@ public final class InvManager extends Module {
     private InventoryAction armorAction(LocalPlayer player) {
         Inventory carried = player.getInventory();
         for (EquipmentSlot equipmentSlot : ARMOR_SLOTS) {
-            ItemStack equipped = player.getItemBySlot(equipmentSlot);
+            ItemStack equipped = transactions.item(carried, equipmentSlot.getIndex(Inventory.INVENTORY_SIZE));
             ArmorCandidate best = null;
             for (int inventorySlot = 0; inventorySlot < BACKPACK_END; inventorySlot++) {
-                ItemStack stack = carried.getItem(inventorySlot);
+                ItemStack stack = transactions.item(carried, inventorySlot);
                 Equippable equippable = stack.get(DataComponents.EQUIPPABLE);
                 if (stack.isEmpty() || equippable == null || equippable.slot() != equipmentSlot
                         || !equippable.canBeEquippedBy(player.getType())
@@ -315,7 +428,7 @@ public final class InvManager extends Module {
             if (preferences.isEmpty()) {
                 continue;
             }
-            ItemStack current = carried.getItem(destination);
+            ItemStack current = transactions.item(carried, destination);
             InventoryPickerSetting.Preference active = activePreference(carried, destination, protectedHotbar,
                     false);
 
@@ -367,7 +480,7 @@ public final class InvManager extends Module {
         for (int destination = 0; destination < result.length; destination++) {
             for (InventoryPickerSetting.Preference preference : layout.slot(destination)) {
                 if (hasMatch(carried, preference)) {
-                    result[destination] = matches(preference, carried.getItem(destination));
+                    result[destination] = matches(preference, transactions.item(carried, destination));
                     break;
                 }
             }
@@ -382,7 +495,7 @@ public final class InvManager extends Module {
             for (int inventorySlot = 0; inventorySlot < BACKPACK_END; inventorySlot++) {
                 boolean protectedSlot = inventorySlot < protectedHotbar.length && protectedHotbar[inventorySlot];
                 if (sourceAllowed(inventorySlot, destination, protectedSlot, backpackOnly)
-                        && matches(preference, carried.getItem(inventorySlot))) {
+                        && matches(preference, transactions.item(carried, inventorySlot))) {
                     return preference;
                 }
             }
@@ -395,7 +508,7 @@ public final class InvManager extends Module {
                                           boolean[] protectedHotbar, boolean backpackOnly) {
         HotbarCandidate best = null;
         for (int inventorySlot = 0; inventorySlot < BACKPACK_END; inventorySlot++) {
-            ItemStack stack = carried.getItem(inventorySlot);
+            ItemStack stack = transactions.item(carried, inventorySlot);
             boolean protectedSlot = inventorySlot < protectedHotbar.length && protectedHotbar[inventorySlot];
             if (!sourceAllowed(inventorySlot, destination, protectedSlot, backpackOnly)
                     || !matches(preference, stack)) {
@@ -430,7 +543,7 @@ public final class InvManager extends Module {
 
     private boolean hasMatch(Inventory carried, InventoryPickerSetting.Preference preference) {
         for (int inventorySlot = 0; inventorySlot < BACKPACK_END; inventorySlot++) {
-            if (matches(preference, carried.getItem(inventorySlot))) {
+            if (matches(preference, transactions.item(carried, inventorySlot))) {
                 return true;
             }
         }
@@ -452,7 +565,7 @@ public final class InvManager extends Module {
     private InventoryAction cleanerAction(LocalPlayer player) {
         Inventory carried = player.getInventory();
         for (int inventorySlot = BACKPACK_START; inventorySlot < BACKPACK_END; inventorySlot++) {
-            ItemStack stack = carried.getItem(inventorySlot);
+            ItemStack stack = transactions.item(carried, inventorySlot);
             if (stack.isEmpty()) {
                 continue;
             }
@@ -470,16 +583,16 @@ public final class InvManager extends Module {
     }
 
     private int keeperSlot(Inventory carried, int seedSlot) {
-        ItemStack seed = carried.getItem(seedSlot);
+        ItemStack seed = transactions.item(carried, seedSlot);
         ItemStack normalized = InventoryPickerSetting.ItemRef.normalize(seed);
         int keeper = seedSlot;
         // ponytail: bounded 27-slot scan; use grouping only if the player backpack grows materially.
         for (int inventorySlot = BACKPACK_START; inventorySlot < BACKPACK_END; inventorySlot++) {
-            ItemStack candidate = carried.getItem(inventorySlot);
+            ItemStack candidate = transactions.item(carried, inventorySlot);
             if (!candidate.isEmpty() && ItemStack.isSameItemSameComponents(normalized,
                     InventoryPickerSetting.ItemRef.normalize(candidate))
                     && cleanerItems.effectiveMode(candidate) == InventoryPickerSetting.CleanerMode.KEEP_ONE
-                    && betterKeeper(candidate.getCount(), inventorySlot, carried.getItem(keeper).getCount(), keeper)) {
+                    && betterKeeper(candidate.getCount(), inventorySlot, transactions.item(carried, keeper).getCount(), keeper)) {
                 keeper = inventorySlot;
             }
         }
@@ -490,9 +603,9 @@ public final class InvManager extends Module {
         return count > currentCount || count == currentCount && index < currentIndex;
     }
 
-    private static int freeBackpackSlot(Inventory inventory) {
+    private int freeBackpackSlot(Inventory inventory) {
         for (int inventorySlot = BACKPACK_START; inventorySlot < BACKPACK_END; inventorySlot++) {
-            if (inventory.getItem(inventorySlot).isEmpty()) {
+            if (transactions.item(inventory, inventorySlot).isEmpty()) {
                 return inventorySlot;
             }
         }
@@ -526,9 +639,12 @@ public final class InvManager extends Module {
         boolean instant = switch (kind) {
             case ARMOR -> instantArmor.get();
             case HOTBAR -> instantHotBar.get();
-            case CLEANER -> instantClean.get();
+            // Instant Clean drops run on the render loop and never reach this cooldown, so when
+            // it is on the branch below is unreachable for CLEANER; when it is off the Delay
+            // applies exactly as it does to everything else.
+            case CLEANER -> false;
         };
-        countdown = instant ? INSTANT_GAP_TICKS
+        countdown = instant ? INSTANT_SWAP_GAP_TICKS
                 : gapTicks(delay.sampleMillis(), ThreadLocalRandom.current().nextDouble());
     }
 
@@ -553,16 +669,17 @@ public final class InvManager extends Module {
     }
 
     private void clearSession() {
+        transactions.reset();
         sessionPlayer = null;
         sessionLevel = null;
         sessionScreen = null;
         countdown = 0;
         worked = false;
         previousX = 0.0;
-        previousY = 0.0;
         previousZ = 0.0;
         previousSelected = -1;
         manualCooldown = 0;
+        tickBlocked = false;
     }
 
     static ArmorScore armorScore(ItemStack stack, EquipmentSlot slot) {

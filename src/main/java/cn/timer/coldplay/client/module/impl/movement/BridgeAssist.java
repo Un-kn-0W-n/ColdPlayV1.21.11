@@ -2,7 +2,6 @@ package cn.timer.coldplay.client.module.impl.movement;
 
 import cn.timer.coldplay.client.module.Category;
 import cn.timer.coldplay.client.module.Module;
-import cn.timer.coldplay.client.setting.NumberSetting;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -13,15 +12,21 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
 
-import java.util.concurrent.ThreadLocalRandom;
-
+/**
+ * Sneaks for the fewest ticks that still keep the player on the bridge. Sneaking is the slow part of
+ * bridging, so every tick of it is spent as late as it can be: the ring below is vanilla's own hang
+ * limit and nothing more, and the tap ends on the first tick the block underfoot makes it pointless.
+ */
 public final class BridgeAssist extends Module {
     static final double SKIN = 1.0E-7;
-    static final double MIN_PROBE = 0.3;
-    static final int MIN_HOLD_TICKS = 2;
-    static final int MAX_HOLD_TICKS = 3;
+    /**
+     * The ring reach, and the only one there is. The probe box is the whole 0.6-wide footprint, so
+     * 0.3 is exactly the reach that reads as empty once the player is over the drop and not a step
+     * before — the latest a sneak can start and still be a sneak the player is already owed.
+     */
+    static final double HANG_PROBE = 0.3;
     static final double TRAVEL_LEAD = 0.1;
-    static final double PROBE_STEP = 0.05;
+    static final double PROBE_STEP = 0.02;
 
     private static final double DIAGONAL = Math.sqrt(0.5);
     private static final double[][] DIRECTIONS = {
@@ -35,12 +40,8 @@ public final class BridgeAssist extends Module {
         boolean canFallAt(double offsetX, double offsetZ);
     }
 
-    private final NumberSetting edgeDistance = addSetting(
-            new NumberSetting("EdgeDistance", MIN_PROBE, MIN_PROBE, 0.5, 0.01));
-
     private LocalPlayer owner;
     private boolean bridging;
-    private int holdTicks;
 
     public BridgeAssist() {
         super("BridgeAssist", "Sneaks at block edges while holding blocks", Category.MOVEMENT,
@@ -64,31 +65,28 @@ public final class BridgeAssist extends Module {
         FloorProbe probe = floorProbe(player, level);
         Vec3 motion = player.getDeltaMovement();
         double speed = Math.sqrt(motion.x * motion.x + motion.z * motion.z);
-        // The ring has to grow with speed: at a fixed radius it straddles gaps a fast player falls into.
-        double reach = Math.max(edgeDistance.get(), speed + TRAVEL_LEAD);
 
+        // Two questions, and only two: am I over the drop already, and would this stride put me
+        // there. Neither grows a margin the player would have to walk off at sneak speed.
         return step(held.getItem() instanceof BlockItem,
                 held.isEmpty(),
-                atAnyEdge(probe, reach) || edgeAhead(probe, motion.x, motion.z, speed),
-                movingForward(input),
-                ThreadLocalRandom.current().nextInt(MIN_HOLD_TICKS, MAX_HOLD_TICKS + 1));
+                atAnyEdge(probe) || edgeAhead(probe, motion.x, motion.z, speed),
+                movingForward(input));
     }
 
-    boolean step(boolean holdingBlock, boolean handEmpty, boolean atEdge, boolean movingForward,
-                 int pulse) {
+    /**
+     * The whole cross-tick decision. The sneak lasts exactly as long as the edge does: the tick a
+     * block lands under the feet there is floor again, and holding the key past that only spends the
+     * run-up to the next block at a third of walking speed.
+     */
+    boolean step(boolean holdingBlock, boolean handEmpty, boolean atEdge, boolean movingForward) {
         // An emptied hand is the last block being placed; anything else ends the bridge.
         if (!holdingBlock && (!bridging || !handEmpty)) {
             clear();
             return false;
         }
-        // An owed sneak keeps the session alive through the pulse.
-        bridging = holdingBlock || atEdge || holdTicks > 0;
-        if (movingForward || !(atEdge || holdTicks > 0)) {
-            holdTicks = 0; // stepping forward ends the pulse
-            return false;
-        }
-        holdTicks = atEdge ? pulse : holdTicks - 1;
-        return true;
+        bridging = holdingBlock || atEdge;
+        return atEdge && !movingForward;
     }
 
     @Override
@@ -98,7 +96,6 @@ public final class BridgeAssist extends Module {
 
     private void clear() {
         bridging = false;
-        holdTicks = 0;
     }
 
     /** Vanilla's Player.canFallAtLeast, reimplemented because it is private. */
@@ -121,16 +118,20 @@ public final class BridgeAssist extends Module {
                 box.maxX - SKIN + offsetX, box.minY, box.maxZ - SKIN + offsetZ);
     }
 
-    static boolean atAnyEdge(FloorProbe probe, double lookahead) {
-        double reach = Math.max(lookahead, MIN_PROBE);
+    /** Standing over the drop, whichever way it lies: the sneak the player is already owed. */
+    static boolean atAnyEdge(FloorProbe probe) {
         for (double[] direction : DIRECTIONS) {
-            if (probe.canFallAt(direction[0] * reach, direction[1] * reach)) {
+            if (probe.canFallAt(direction[0] * HANG_PROBE, direction[1] * HANG_PROBE)) {
                 return true;
             }
         }
         return false;
     }
 
+    /**
+     * About to be over it: the stride just reported, marched out to the furthest one this tick could
+     * still turn into. Nothing beyond that, or the player creeps the difference.
+     */
     static boolean edgeAhead(FloorProbe probe, double dirX, double dirZ, double speed) {
         int steps = Math.max(1, (int) Math.ceil(TRAVEL_LEAD / PROBE_STEP));
         for (int step = 0; step <= steps; step++) {

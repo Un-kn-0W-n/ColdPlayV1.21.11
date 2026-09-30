@@ -2,7 +2,7 @@ package cn.timer.coldplay.client.mixin;
 
 import cn.timer.coldplay.client.ClientCore;
 import cn.timer.coldplay.client.manager.RotationManager;
-import cn.timer.coldplay.client.module.impl.visuals.EntityESP;
+import cn.timer.coldplay.client.module.impl.visuals.ESP;
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
@@ -29,9 +29,9 @@ abstract class LivingEntityRendererMixin {
     )
     private void coldplay$renderRotation(LivingEntity entity, LivingEntityRenderState state,
                                          float tickDelta, CallbackInfo callback) {
-        EntityESP entityEsp = ClientCore.get().entityEsp();
-        if (entityEsp != null) {
-            entityEsp.extractRenderState(entity, state);
+        ESP esp = ClientCore.get().esp();
+        if (esp != null) {
+            esp.extractRenderState(entity, state);
         }
 
         RotationManager rotations = RotationManager.getInstance();
@@ -49,8 +49,6 @@ abstract class LivingEntityRendererMixin {
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/entity/LivingEntityRenderer;getRenderType(Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;ZZZ)Lnet/minecraft/client/renderer/rendertype/RenderType;")
     )
     private RenderType coldplay$chamsMaterial(RenderType original, LivingEntityRenderState state) {
-        EntityESP entityEsp = ClientCore.get().entityEsp();
-        return entityEsp != null && entityEsp.usesChams() && state.getData(EntityESP.COLOR) != null
-                ? RenderTypes.textSeeThrough(getTextureLocation(state)) : original;
+        return ESP.seeThrough(state) ? RenderTypes.textSeeThrough(getTextureLocation(state)) : original;
     }
 }

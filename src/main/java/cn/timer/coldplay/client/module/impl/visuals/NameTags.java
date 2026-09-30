@@ -1,20 +1,21 @@
 package cn.timer.coldplay.client.module.impl.visuals;
 
 import cn.timer.coldplay.client.gui.Draw;
+import cn.timer.coldplay.client.setting.BooleanSetting;
+import cn.timer.coldplay.client.setting.ColorSetting;
+import cn.timer.coldplay.client.setting.NumberSetting;
 import cn.timer.coldplay.client.util.HealthResolver;
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.Arrays;
 
-/**
- * Held items, armor and a real-health bar above an {@link EntityESP} target. The entity half is read
- * while its render state is extracted; the anchor is projected with the boxes and drawn on the HUD
- * pass. Every metric is in GUI pixels.
- */
-final class NameTags {
+/** Held items, armor and a real-health bar above each target. Every metric is in GUI pixels. */
+public final class NameTags extends EntityModule {
 
     static final int ICON = 8;           // a 16px GUI icon at 0.5 scale
     static final int ICON_GAP = 1;
@@ -33,18 +34,52 @@ final class NameTags {
 
     private static final ItemStack[] NO_ICONS = new ItemStack[0];
 
-    private NameTags() {
+    private final BooleanSetting items = addSetting(new BooleanSetting("Items", true));
+    private final BooleanSetting armor = addSetting(new BooleanSetting("Armor", true));
+    private final BooleanSetting health = addSetting(new BooleanSetting("Health", true));
+    private final NumberSetting offset = addSetting(new NumberSetting("Offset", 0.6, 0.0, 2.0, 0.05));
+    private final ColorSetting border = addSetting(new ColorSetting("Border", 0xFF000000));
+
+    public NameTags() {
+        super("NameTags", "Shows equipment and health above entities", false);
     }
 
-    /** One entity's tag contents, held on its render state for the rest of the frame. */
+    @Override
+    protected void onRender2D(GuiGraphics graphics, DeltaTracker deltaTracker) {
+        float partialTick = deltaTracker.getGameTimeDeltaPartialTick(false);
+        int width = graphics.guiWidth();
+        int height = graphics.guiHeight();
+        boolean bar = health.get();
+        double above = offset.get();
+        int borderColor = border.get();
+        int scale = Projection.guiScale();
+        forEachTarget((entity, ignored) -> {
+            Tag tag = new Tag(bar ? healthFraction(entity) : 0.0F, bar,
+                    icons(entity, items.get(), armor.get()));
+            if (tag.isEmpty()) {
+                return;
+            }
+            Vec3 anchor = Projection.toGui(entity.getPosition(partialTick)
+                    .add(0.0, entity.getBbHeight() + above, 0.0), width, height);
+            if (anchor == null) {
+                return;
+            }
+            double x = Projection.snap(anchor.x, scale);
+            double y = Projection.snap(anchor.y, scale);
+            if (onScreen((int) Math.round(x), (int) Math.round(y), tag, width, height)) {
+                graphics.pose().pushMatrix();
+                graphics.pose().translate((float) x, (float) y);
+                draw(graphics, 0, 0, tag, borderColor);
+                graphics.pose().popMatrix();
+            }
+        });
+    }
+
+    /** One entity's tag contents. */
     record Tag(float healthFraction, boolean bar, ItemStack[] icons) {
         boolean isEmpty() {
             return !bar && icons.length == 0;
         }
-    }
-
-    /** A {@link Tag} placed at the anchor its bar's bottom edge sits on. */
-    record Placed(int x, int y, Tag tag) {
     }
 
     /** The non-empty equipment to draw, in row order; a shared empty array when there is none. */
@@ -111,13 +146,13 @@ final class NameTags {
         return left + tagWidth >= 0 && left <= screenWidth && y >= 0 && y - height(tag) <= screenHeight;
     }
 
-    static void draw(GuiGraphics graphics, Placed placed, int borderColor) {
-        Tag tag = placed.tag();
-        int barTop = placed.y() - (tag.bar() ? BAR_H : 0);
+    /** Draws the tag centred on x, with its bar's bottom edge on y. */
+    static void draw(GuiGraphics graphics, int x, int y, Tag tag, int borderColor) {
+        int barTop = y - (tag.bar() ? BAR_H : 0);
 
         if (tag.icons().length > 0) {
             int iconTop = barTop - (tag.bar() ? ROW_GAP : 0) - ICON;
-            int cursor = placed.x() - rowWidth(tag.icons().length) / 2;
+            int cursor = x - rowWidth(tag.icons().length) / 2;
             for (ItemStack stack : tag.icons()) {
                 Draw.pushScale(graphics, cursor, iconTop, 0.5F);
                 graphics.renderItem(stack, cursor, iconTop);
@@ -128,12 +163,12 @@ final class NameTags {
 
         if (tag.bar()) {
             int barW = barWidth(tag.icons().length);
-            int left = placed.x() - barW / 2;
+            int left = x - barW / 2;
             // the unfilled interior stays clear, so only the border and the fill are drawn
-            Draw.outline(graphics, left, barTop, left + barW, placed.y(), BAR_BORDER, borderColor);
+            Draw.outline(graphics, left, barTop, left + barW, y, BAR_BORDER, borderColor);
             int fill = fillWidth(barW, tag.healthFraction());
             Draw.rectBounds(graphics, left + BAR_BORDER, barTop + BAR_BORDER,
-                    left + BAR_BORDER + fill, placed.y() - BAR_BORDER, healthColor(tag.healthFraction()));
+                    left + BAR_BORDER + fill, y - BAR_BORDER, healthColor(tag.healthFraction()));
         }
     }
 }

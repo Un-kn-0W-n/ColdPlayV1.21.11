@@ -1,7 +1,6 @@
 package cn.timer.coldplay.client.mixin;
 
-import cn.timer.coldplay.client.ClientCore;
-import cn.timer.coldplay.client.module.impl.visuals.EntityESP;
+import cn.timer.coldplay.client.module.impl.visuals.ESP;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
@@ -21,9 +20,7 @@ abstract class EquipmentLayerRendererMixin {
     )
     private RenderType coldplay$chamsArmor(Identifier texture, Operation<RenderType> original,
                                            @Local(argsOnly = true) Object state) {
-        EntityESP entityEsp = ClientCore.get().entityEsp();
-        return entityEsp != null && entityEsp.usesChams() && state instanceof LivingEntityRenderState living
-                && living.getData(EntityESP.COLOR) != null
+        return state instanceof LivingEntityRenderState living && ESP.seeThrough(living)
                 ? RenderTypes.textSeeThrough(texture) : original.call(texture);
     }
 }
