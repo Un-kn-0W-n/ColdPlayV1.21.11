@@ -19,11 +19,15 @@ import cn.timer.coldplay.client.module.impl.movement.Sprint;
 import cn.timer.coldplay.client.module.impl.movement.Velocity;
 import cn.timer.coldplay.client.module.impl.utilities.ChestStealer;
 import cn.timer.coldplay.client.module.impl.utilities.InvManager;
-import cn.timer.coldplay.client.module.impl.visuals.BlockESP;
+import cn.timer.coldplay.client.module.impl.visuals.Arrows;
+import cn.timer.coldplay.client.module.impl.visuals.BedESP;
+import cn.timer.coldplay.client.module.impl.visuals.ChestESP;
 import cn.timer.coldplay.client.module.impl.visuals.ClickGuiModule;
-import cn.timer.coldplay.client.module.impl.visuals.EntityESP;
+import cn.timer.coldplay.client.module.impl.visuals.ESP;
 import cn.timer.coldplay.client.module.impl.visuals.FullBright;
 import cn.timer.coldplay.client.module.impl.visuals.Hud;
+import cn.timer.coldplay.client.module.impl.visuals.NameTags;
+import cn.timer.coldplay.client.module.impl.visuals.Tracers;
 import cn.timer.coldplay.client.module.impl.visuals.Trajectories;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents;
@@ -56,7 +60,7 @@ public final class ClientCore {
     private ClickGuiScreen clickGui;
     private HudState hudState;
     private AltManager altManager;
-    private EntityESP entityEsp;
+    private ESP esp;
     private InvManager invManager;
     private ChestStealer chestStealer;
     private boolean initialized;
@@ -101,9 +105,15 @@ public final class ClientCore {
         modules.register(new FullBright());
         Hud hud = new Hud(modules, hudState);
         modules.register(hud);
-        entityEsp = new EntityESP();
-        modules.register(entityEsp);
-        modules.register(new BlockESP());
+        esp = new ESP();
+        modules.register(esp);
+        modules.register(new NameTags());
+        modules.register(new Tracers());
+        modules.register(new Arrows());
+        ChestESP chestEsp = new ChestESP();
+        modules.register(chestEsp);
+        BedESP bedEsp = new BedESP();
+        modules.register(bedEsp);
         modules.register(new Trajectories());
         modules.register(new ClickGuiModule());
         altManager = new AltManager();
@@ -111,9 +121,12 @@ public final class ClientCore {
         HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT,
                 Identifier.fromNamespaceAndPath("coldplay", "hud"), hud::render);
         HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT,
-                Identifier.fromNamespaceAndPath("coldplay", "entity_esp"), entityEsp::render2D);
+                Identifier.fromNamespaceAndPath("coldplay", "modules"), modules::render2D);
+        HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT,
+                Identifier.fromNamespaceAndPath("coldplay", "chest_esp"), chestEsp::render2D);
+        HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT,
+                Identifier.fromNamespaceAndPath("coldplay", "bed_esp"), bedEsp::render2D);
         registerStatusBars();
-        WorldRenderEvents.END_EXTRACTION.register(entityEsp::extract2D);
         WorldRenderEvents.END_EXTRACTION.register(backTrack::extractRewind);
 
         ClientLifecycleEvents.CLIENT_STARTED.register(this::initializeUi);
@@ -209,8 +222,8 @@ public final class ClientCore {
         return altManager;
     }
 
-    public EntityESP entityEsp() {
-        return entityEsp;
+    public ESP esp() {
+        return esp;
     }
 
     public void render(DeltaTracker deltaTracker) {

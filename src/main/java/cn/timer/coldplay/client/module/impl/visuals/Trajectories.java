@@ -159,7 +159,7 @@ public final class Trajectories extends Module {
 
         double strokeWidth = width.get();
         if (drawPath && points.size() > 1) {
-            // The stroke stays opaque; Opacity drives the fills below, as it does in BlockESP.
+            // The stroke stays opaque; Opacity drives the fills below, as it does in ChestESP and BedESP.
             int color = ARGB.opaque(pathColor.get());
             for (int i = 1; i < points.size(); i++) {
                 Gizmos.line(points.get(i - 1), points.get(i), color, (float) strokeWidth).setAlwaysOnTop();
