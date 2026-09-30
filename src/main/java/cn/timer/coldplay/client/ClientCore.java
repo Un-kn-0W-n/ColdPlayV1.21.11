@@ -11,6 +11,7 @@ import cn.timer.coldplay.client.module.impl.combat.AimAssist;
 import cn.timer.coldplay.client.module.impl.combat.AntiBot;
 import cn.timer.coldplay.client.module.impl.combat.AutoClicker;
 import cn.timer.coldplay.client.module.impl.combat.BackTrack;
+import cn.timer.coldplay.client.module.impl.combat.HitBoxes;
 import cn.timer.coldplay.client.module.impl.combat.KillAura;
 import cn.timer.coldplay.client.module.impl.combat.TriggerBot;
 import cn.timer.coldplay.client.module.impl.combat.WTap;
@@ -95,6 +96,7 @@ public final class ClientCore {
         AutoClicker autoClicker = new AutoClicker();
         modules.register(autoClicker);
         modules.register(new AimAssist());
+        modules.register(HitBoxes.get());
         modules.register(new BridgeAssist());
         modules.register(new Sprint());
         modules.register(new Velocity());

@@ -5,6 +5,7 @@
   "client": [
     "ClientPacketListenerMixin",
     "ConnectionMixin",
+    "EntityMixin",
     "EquipmentLayerRendererMixin",
     "ExperienceBarRendererMixin",
     "GameRendererMixin",
