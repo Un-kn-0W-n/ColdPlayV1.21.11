@@ -21,8 +21,7 @@ import org.lwjgl.glfw.GLFW;
  * order right without restating any of them here.
  *
  * <p>The swing is held until it is worth the most: vanilla scales base damage by
- * {@code 0.2 + charge * charge * 0.8} and only allows a critical above nine tenths of charge, so a
- * spammed hit lands for a fifth of a timed one.
+ * {@code 0.2 + charge * charge * 0.8}, so a spammed hit lands for a fifth of a timed one.
  */
 public final class TriggerBot extends Module {
     private final BooleanSetting players = addSetting(new BooleanSetting("Players", true));
@@ -62,10 +61,6 @@ public final class TriggerBot extends Module {
         if (player.getAttackStrengthScale(0.5F) < 1.0F) {
             return;
         }
-        if (risingIntoCrit(!player.onGround(), player.getDeltaMovement().y, player.fallDistance,
-                critAvailable(player))) {
-            return;
-        }
 
         KeyMapping attack = minecraft.options.keyAttack;
         // Unbound resolves to InputConstants.UNKNOWN, which every other unbound mapping shares.
@@ -73,22 +68,6 @@ public final class TriggerBot extends Module {
             return;
         }
         KeyMapping.click(KeyBindingHelper.getBoundKeyOf(attack));
-    }
-
-    /** Everything canCriticalAttack asks for that a jump will not change on its own. */
-    private static boolean critAvailable(LocalPlayer player) {
-        return !player.isSprinting() && !player.onClimbable() && !player.isInWater()
-                && !player.isPassenger() && !player.isMobilityRestricted();
-    }
-
-    /**
-     * A critical needs the player already falling, so a fully charged swing taken on the way up is
-     * worth holding: the same hit lands for half again as much a few ticks later. Only an ascent is
-     * waited on, never a hover, so the wait is bounded by the arc and the module cannot stall.
-     */
-    static boolean risingIntoCrit(boolean airborne, double verticalSpeed, double fallDistance,
-                                  boolean critAvailable) {
-        return critAvailable && airborne && fallDistance <= 0.0 && verticalSpeed > 0.0;
     }
 
     /** Free of Minecraft state so the category gate itself is testable. */
